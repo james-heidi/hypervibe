@@ -26,6 +26,7 @@ open HyperVibe.app
 | `MenuBarManager.swift` | Menu bar UI, `ButtonAction`/`SwipeAction`/`SwipeDirection` enums, mapping persistence (UserDefaults keys `buttonMappings`, `swipeMappings`, schema key `buttonMappingsSchema`) |
 | `RemoteDetector.swift` | IOKit HID detection/seizure of the remote (product ID `0x266`) |
 | `RemoteInputHandler.swift` | Raw HID button events → mapped actions; 200 ms debounce shared with MediaKeyInterceptor |
+| `RemoteWebServer.swift` | Local HTTP/PWA + authenticated WebSocket server; LAN rebinding and heartbeat/stuck-key safety |
 | `MediaKeyInterceptor.swift` | CGEvent tap catching AVRCP media keys (NX_SYSDEFINED path) |
 | `MediaController.swift` | Synthesizes NX_SYSDEFINED media-key events |
 | `TouchHandler.swift` | Trackpad via private MultitouchSupport: cursor, scroll, tap, swipe detection |

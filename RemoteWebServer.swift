@@ -37,12 +37,14 @@ final class RemoteWebServer {
     private static let webSocketPortValue: UInt16 = 8766
     private static let heartbeatTimeout: TimeInterval = 1.5
     private static let authenticationTimeout: TimeInterval = 5.0
+    private static let networkChangeDebounce: TimeInterval = 2.0
     private static let maximumMessageSize = 4_096
     private static let webSourcePrefix = "web:"
 
     private weak var inputHandler: RemoteInputHandler?
     private let actionResolver: (String) -> ButtonAction?
     private let queue = DispatchQueue(label: "com.hypervibe.remote-web-server")
+    private let pathMonitor = NWPathMonitor()
     private let token: String
 
     private var desiredEnabled: Bool
@@ -53,6 +55,7 @@ final class RemoteWebServer {
     private var localAddress: String?
     private var clients: [ObjectIdentifier: Client] = [:]
     private var watchdog: DispatchSourceTimer?
+    private var networkRestartWorkItem: DispatchWorkItem?
     private var sleepObserver: NSObjectProtocol?
 
     var onStatusChange: ((Status) -> Void)?
@@ -78,9 +81,16 @@ final class RemoteWebServer {
         ) { [weak self] _ in
             self?.releaseForSystemSleep()
         }
+
+        pathMonitor.pathUpdateHandler = { [weak self] _ in
+            self?.scheduleNetworkRestartLocked()
+        }
+        pathMonitor.start(queue: queue)
     }
 
     deinit {
+        pathMonitor.cancel()
+        networkRestartWorkItem?.cancel()
         if let observer = sleepObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
@@ -187,6 +197,8 @@ final class RemoteWebServer {
     }
 
     private func stopLocked() {
+        networkRestartWorkItem?.cancel()
+        networkRestartWorkItem = nil
         watchdog?.cancel()
         watchdog = nil
         httpListener?.cancel()
@@ -203,6 +215,27 @@ final class RemoteWebServer {
             client.connection.cancel()
             releaseInputHolds(sourcePrefix: client.sourcePrefix)
         }
+    }
+
+    private func scheduleNetworkRestartLocked() {
+        guard desiredEnabled else { return }
+        networkRestartWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.networkRestartWorkItem = nil
+
+            let currentAddress = Self.privateIPv4Address()
+            guard currentAddress != self.localAddress else { return }
+
+            let oldAddress = self.localAddress ?? "none"
+            let newAddress = currentAddress ?? "none"
+            rmDebug("📱 iPhone remote network changed: \(oldAddress) → \(newAddress)")
+            self.stopLocked()
+            self.startLocked()
+        }
+        networkRestartWorkItem = workItem
+        queue.asyncAfter(deadline: .now() + Self.networkChangeDebounce, execute: workItem)
     }
 
     private func handleListenerState(_ state: NWListener.State, isWebSocket: Bool) {
