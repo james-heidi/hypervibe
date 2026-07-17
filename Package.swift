@@ -20,6 +20,7 @@ let package = Package(
                 "MenuBarManager.swift",
                 "RemoteDetector.swift",
                 "RemoteInputHandler.swift",
+                "RemoteWebServer.swift",
                 "CursorController.swift",
                 "MediaController.swift",
                 "MediaKeyInterceptor.swift",
@@ -31,7 +32,8 @@ let package = Package(
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("AudioToolbox"),
                 .linkedFramework("Carbon"),
-                .linkedFramework("AppKit")
+                .linkedFramework("AppKit"),
+                .linkedFramework("Network")
             ]
         )
     ]

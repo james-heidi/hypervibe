@@ -13,6 +13,7 @@ SWIFT_FILES=(
     "MenuBarManager.swift"
     "RemoteDetector.swift"
     "RemoteInputHandler.swift"
+    "RemoteWebServer.swift"
     "CursorController.swift"
     "MediaController.swift"
     "MediaKeyInterceptor.swift"
@@ -42,18 +43,19 @@ fi
 echo "Building for: $TARGET"
 
 # Build
-swiftc \
+xcrun swiftc \
     -sdk "$SDK_PATH" \
     -target "$TARGET" \
     -o HyperVibe \
     "${SWIFT_FILES[@]}" \
     -import-objc-header SiriRemote-Bridging-Header.h \
-    -F /System/Library/PrivateFrameworks \
+    -F "$SDK_PATH/System/Library/PrivateFrameworks" \
     -framework IOKit \
     -framework CoreGraphics \
     -framework AudioToolbox \
     -framework Carbon \
     -framework AppKit \
+    -framework Network \
     -framework MultitouchSupport
 
 if [ $? -eq 0 ]; then

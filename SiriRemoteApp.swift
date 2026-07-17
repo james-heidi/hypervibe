@@ -18,6 +18,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var remoteInputHandler: RemoteInputHandler?
     private var mediaKeyInterceptor: MediaKeyInterceptor?
     private var touchHandler: TouchHandler?
+    private var remoteWebServer: RemoteWebServer?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("🚀 HyperVibe starting...")
@@ -46,10 +47,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Initialize controllers
         let cursorController = CursorController()
 
-        remoteInputHandler = RemoteInputHandler(
+        let inputHandler = RemoteInputHandler(
             cursorController: cursorController,
             menuBarManager: menuBarManager
         )
+        remoteInputHandler = inputHandler
+
+        // Local iPhone PWA. The action resolver returns only ButtonAction allowlist entries;
+        // push-to-talk follows the existing Siri-button voice mapping.
+        let webServer = RemoteWebServer(inputHandler: inputHandler) { [weak self] actionID in
+            guard let menuBarManager = self?.menuBarManager else { return nil }
+            let pushToTalkAction = menuBarManager.getMapping(for: "siri")
+            return ButtonAction.remoteAction(for: actionID, pushToTalkAction: pushToTalkAction)
+        }
+        remoteWebServer = webServer
+        menuBarManager.onRemoteServerToggle = { [weak webServer] enabled in
+            webServer?.setEnabled(enabled)
+        }
+        webServer.onStatusChange = { [weak menuBarManager] status in
+            menuBarManager?.updateRemoteServerStatus(
+                enabled: status.enabled,
+                connectURL: status.connectURL,
+                error: status.error
+            )
+        }
+        webServer.startFromSavedPreference()
         
         // Start touch handler for trackpad (before remote detection so we can wire the callback)
         touchHandler = TouchHandler(cursorController: cursorController)
@@ -101,6 +123,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func cleanup() {
+        remoteWebServer?.shutdown()
+        remoteInputHandler?.releaseAllHeldKeys()
         touchHandler?.stop()
         remoteDetector?.stopDetection()
         mediaKeyInterceptor?.stop()

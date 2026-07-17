@@ -231,6 +231,10 @@ class RemoteInputHandler {
             sendKey(kVK_UpArrow)
         case .downKey:
             sendKey(kVK_DownArrow)
+        case .leftKey:
+            sendKey(kVK_LeftArrow)
+        case .rightKey:
+            sendKey(kVK_RightArrow)
         case .escKey:
             sendKey(kVK_Escape)
         case .ctrlC:
@@ -239,6 +243,21 @@ class RemoteInputHandler {
             break // handled by handleHoldAction
         case .trackpadClick:
             cursorController.performClick()
+        }
+    }
+
+    /// Route an authenticated iPhone action through the same key lifecycle as HID input.
+    /// `sourceID` is server-generated and is never derived into a raw key code.
+    func handleExternalAction(_ action: ButtonAction, sourceID: String, pressed: Bool) {
+        executeAction(action, button: sourceID, pressed: pressed)
+    }
+
+    /// Release holds owned by one external connection without disturbing a physical remote hold.
+    func releaseHeldKeys(sourcePrefix: String) {
+        let matchingKeys = heldKeys.keys.filter { $0.hasPrefix(sourcePrefix) }
+        for key in matchingKeys {
+            guard let held = heldKeys.removeValue(forKey: key) else { continue }
+            postKey(keyCode: held.keyCode, flags: [], keyDown: false)
         }
     }
 
@@ -266,7 +285,7 @@ class RemoteInputHandler {
     }
 
     /// Called on device removal to avoid stuck modifiers if the remote disconnects mid-hold.
-    private func releaseAllHeldKeys() {
+    func releaseAllHeldKeys() {
         for (_, held) in heldKeys {
             postKey(keyCode: held.keyCode, flags: [], keyDown: false)
         }

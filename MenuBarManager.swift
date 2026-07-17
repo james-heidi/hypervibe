@@ -13,6 +13,8 @@ enum ButtonAction: String, CaseIterable {
     case enterKey = "Enter: Submit prompt"
     case upKey = "Up: Navigate Up"
     case downKey = "Down: Navigate Down"
+    case leftKey = "Left: Navigate Left"
+    case rightKey = "Right: Navigate Right"
     case escKey = "Esc: Navigate Back"
     case ctrlC = "Control + C: Cancel Prompt"
     case spaceKey = "Space: Claude Voice Dictation"
@@ -28,6 +30,22 @@ enum ButtonAction: String, CaseIterable {
         switch self {
         case .spaceKey, .rightCmd, .rightOpt: return true
         default: return false
+        }
+    }
+
+    /// Fixed allowlist for the iPhone remote. The phone sends semantic action IDs;
+    /// raw virtual key codes are never accepted over the network.
+    static func remoteAction(for actionID: String, pushToTalkAction: ButtonAction) -> ButtonAction? {
+        switch actionID {
+        case "esc": return .escKey
+        case "enter": return .enterKey
+        case "up": return .upKey
+        case "down": return .downKey
+        case "left": return .leftKey
+        case "right": return .rightKey
+        case "ctrlC": return .ctrlC
+        case "talk": return pushToTalkAction.requiresHold ? pushToTalkAction : nil
+        default: return nil
         }
     }
 }
@@ -86,6 +104,9 @@ class MenuBarManager {
     private let statusItem: NSStatusItem
     private let menu: NSMenu
     private let statusMenuItem: NSMenuItem
+    private var remoteServerEnabled = false
+    private var remoteServerURL: String?
+    private var remoteServerError: String?
     
     // Button mappings (stored in UserDefaults)
     private var buttonMappings: [String: ButtonAction] = [:]
@@ -105,6 +126,9 @@ class MenuBarManager {
 
     /// Set by app delegate so menu bar can delegate media actions to MediaController.
     var mediaController: MediaController?
+
+    /// Set by AppDelegate after RemoteWebServer is created.
+    var onRemoteServerToggle: ((Bool) -> Void)?
 
     init(statusItem: NSStatusItem) {
         self.statusItem = statusItem
@@ -321,6 +345,43 @@ class MenuBarManager {
         swipeItem.submenu = swipeSubmenu
         menu.addItem(swipeItem)
 
+        // iPhone Remote submenu
+        let remoteItem = NSMenuItem(title: "iPhone Remote", action: nil, keyEquivalent: "")
+        let remoteSubmenu = NSMenu()
+
+        let enabledItem = NSMenuItem(
+            title: "Enabled",
+            action: #selector(toggleRemoteServer(_:)),
+            keyEquivalent: ""
+        )
+        enabledItem.target = self
+        enabledItem.state = remoteServerEnabled ? .on : .off
+        remoteSubmenu.addItem(enabledItem)
+
+        if remoteServerEnabled {
+            if let url = remoteServerURL {
+                let urlItem = NSMenuItem(
+                    title: "Connect: \(url)",
+                    action: #selector(copyRemoteServerURL(_:)),
+                    keyEquivalent: ""
+                )
+                urlItem.target = self
+                urlItem.toolTip = "Click to copy the iPhone remote URL"
+                remoteSubmenu.addItem(urlItem)
+            } else if let error = remoteServerError {
+                let errorItem = NSMenuItem(title: "Unavailable: \(error)", action: nil, keyEquivalent: "")
+                errorItem.isEnabled = false
+                remoteSubmenu.addItem(errorItem)
+            } else {
+                let startingItem = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
+                startingItem.isEnabled = false
+                remoteSubmenu.addItem(startingItem)
+            }
+        }
+
+        remoteItem.submenu = remoteSubmenu
+        menu.addItem(remoteItem)
+
         menu.addItem(NSMenuItem.separator())
 
         // Quit
@@ -352,6 +413,16 @@ class MenuBarManager {
             guard let self = self else { return }
             self.statusMenuItem.title = connected ? "Status: Connected ✓" : "Status: Disconnected"
             self.statusItem.button?.appearsDisabled = !connected
+        }
+    }
+
+    func updateRemoteServerStatus(enabled: Bool, connectURL: String?, error: String?) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.remoteServerEnabled = enabled
+            self.remoteServerURL = connectURL
+            self.remoteServerError = error
+            self.rebuildMenu()
         }
     }
     
@@ -464,6 +535,10 @@ class MenuBarManager {
             sendKey(kVK_UpArrow)
         case .downKey:
             sendKey(kVK_DownArrow)
+        case .leftKey:
+            sendKey(kVK_LeftArrow)
+        case .rightKey:
+            sendKey(kVK_RightArrow)
         case .escKey:
             sendKey(kVK_Escape)
         case .ctrlC:
@@ -512,6 +587,16 @@ class MenuBarManager {
         let up = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(keyCode), keyDown: false)
         up?.flags = []
         up?.post(tap: .cghidEventTap)
+    }
+
+    @objc private func toggleRemoteServer(_ sender: NSMenuItem) {
+        onRemoteServerToggle?(!remoteServerEnabled)
+    }
+
+    @objc private func copyRemoteServerURL(_ sender: NSMenuItem) {
+        guard let url = remoteServerURL else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url, forType: .string)
     }
     
     @objc private func quitApp() {
