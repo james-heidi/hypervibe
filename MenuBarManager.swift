@@ -7,6 +7,7 @@
 
 import AppKit
 import Carbon.HIToolbox
+import CoreImage
 
 // Button actions that can be assigned
 enum ButtonAction: String, CaseIterable {
@@ -106,6 +107,7 @@ class MenuBarManager {
     private let statusMenuItem: NSMenuItem
     private var remoteServerEnabled = false
     private var remoteServerURL: String?
+    private var remoteServerQRCode: NSImage?
     private var remoteServerError: String?
     
     // Button mappings (stored in UserDefaults)
@@ -368,6 +370,18 @@ class MenuBarManager {
                 urlItem.target = self
                 urlItem.toolTip = "Click to copy the iPhone remote URL"
                 remoteSubmenu.addItem(urlItem)
+
+                if let qrCode = remoteServerQRCode {
+                    let qrItem = NSMenuItem(
+                        title: "Scan with iPhone Camera",
+                        action: #selector(copyRemoteServerURL(_:)),
+                        keyEquivalent: ""
+                    )
+                    qrItem.target = self
+                    qrItem.image = qrCode
+                    qrItem.toolTip = "Scan to connect, or click to copy the URL"
+                    remoteSubmenu.addItem(qrItem)
+                }
             } else if let error = remoteServerError {
                 let errorItem = NSMenuItem(title: "Unavailable: \(error)", action: nil, keyEquivalent: "")
                 errorItem.isEnabled = false
@@ -420,10 +434,62 @@ class MenuBarManager {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.remoteServerEnabled = enabled
+            if connectURL != self.remoteServerURL {
+                self.remoteServerQRCode = connectURL.flatMap { Self.makeQRCode(for: $0) }
+            }
             self.remoteServerURL = connectURL
             self.remoteServerError = error
             self.rebuildMenu()
         }
+    }
+
+    private static func makeQRCode(for value: String) -> NSImage? {
+        guard let data = value.data(using: .utf8),
+              let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(data, forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+
+        let ciContext = CIContext(options: nil)
+        guard let output = filter.outputImage,
+              let source = ciContext.createCGImage(output, from: output.extent.integral) else {
+            return nil
+        }
+
+        // Four modules provide the standard quiet zone. Scale by a whole number so
+        // every QR module remains aligned to exact pixels at approximately 180 pt.
+        let quietZoneModules = 4
+        let moduleWidth = source.width + quietZoneModules * 2
+        let scale = max(1, Int((180.0 / CGFloat(moduleWidth)).rounded()))
+        let imageWidth = moduleWidth * scale
+        let imageDimension = CGFloat(imageWidth)
+
+        guard let bitmap = CGContext(
+            data: nil,
+            width: imageWidth,
+            height: imageWidth,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        bitmap.setFillColor(NSColor.white.cgColor)
+        bitmap.fill(CGRect(x: 0, y: 0, width: imageDimension, height: imageDimension))
+        bitmap.interpolationQuality = .none
+        bitmap.setShouldAntialias(false)
+        let inset = CGFloat(quietZoneModules * scale)
+        bitmap.draw(source, in: CGRect(
+            x: inset,
+            y: inset,
+            width: CGFloat(source.width * scale),
+            height: CGFloat(source.height * scale)
+        ))
+
+        guard let image = bitmap.makeImage() else { return nil }
+        return NSImage(
+            cgImage: image,
+            size: NSSize(width: imageDimension, height: imageDimension)
+        )
     }
     
     func getMapping(for button: String) -> ButtonAction {
