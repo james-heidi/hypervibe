@@ -87,14 +87,20 @@ chmod +x "${APP_BUNDLE}/Contents/MacOS/$APP_NAME"
 
 # Sign with hardened runtime + entitlements. Required on modern macOS (14+) for
 # IOHIDManager to deliver Bluetooth HID devices like the Siri Remote to the app.
-# Ad-hoc (`--sign -`) is used; for distribution, swap in a Developer ID identity.
+# A stable self-signed identity keeps TCC grants (Input Monitoring/Accessibility)
+# alive across rebuilds; ad-hoc (`--sign -`) is the fallback and loses them each build.
+SIGN_IDENTITY="HyperViabe Dev"
+if ! security find-identity -p codesigning -v | grep -q "$SIGN_IDENTITY"; then
+    echo "Identity '$SIGN_IDENTITY' not found; falling back to ad-hoc signing"
+    SIGN_IDENTITY="-"
+fi
 if [ -f "HyperVibe.entitlements" ]; then
-    echo "Signing with hardened runtime + entitlements..."
+    echo "Signing with hardened runtime + entitlements (identity: $SIGN_IDENTITY)..."
     codesign --force --options=runtime \
         --entitlements "HyperVibe.entitlements" \
-        --sign - \
+        --sign "$SIGN_IDENTITY" \
         "${APP_BUNDLE}"
-    codesign -dvv "${APP_BUNDLE}" 2>&1 | grep -E "(flags|Identifier)" || true
+    codesign -dvv "${APP_BUNDLE}" 2>&1 | grep -E "(flags|Identifier|Authority)" || true
 fi
 
 echo ""
