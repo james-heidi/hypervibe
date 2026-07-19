@@ -45,6 +45,7 @@ class TouchHandler {
     private var reconnectTimer: Timer?
     private var fastReconnectTimer: Timer?
     private var wakeObserver: NSObjectProtocol?
+    private var trackpadControlEnabled = true
     
     var scrollScale: CGFloat = 150.0
     
@@ -101,6 +102,18 @@ class TouchHandler {
         fastReconnectTimer?.invalidate()
         fastReconnectTimer = nil
         stopDevice()
+    }
+
+    /// Keep the touch device running so swipe commands continue to work, while
+    /// independently suppressing pointer movement, scrolling, and tap-to-click.
+    func setTrackpadControlEnabled(_ enabled: Bool) {
+        if Thread.isMainThread {
+            trackpadControlEnabled = enabled
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.trackpadControlEnabled = enabled
+            }
+        }
     }
     
     /// Call when HID button activity is detected (e.g. after remote wake). Re-scans MT devices
@@ -342,7 +355,7 @@ class TouchHandler {
 
         if duration < tapMaxDuration && movement < tapMaxDistance {
             DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
+                guard let self = self, self.trackpadControlEnabled else { return }
                 self.cursorController.performClick()
             }
         }
@@ -355,10 +368,14 @@ class TouchHandler {
         var clamped = (clampedX: false, clampedY: false)
 
         if Thread.isMainThread {
-            clamped = cursorController.moveCursor(deltaX: scaledX, deltaY: scaledY)
+            if trackpadControlEnabled {
+                clamped = cursorController.moveCursor(deltaX: scaledX, deltaY: scaledY)
+            }
         } else {
             DispatchQueue.main.sync {
-                clamped = cursorController.moveCursor(deltaX: scaledX, deltaY: scaledY)
+                if trackpadControlEnabled {
+                    clamped = cursorController.moveCursor(deltaX: scaledX, deltaY: scaledY)
+                }
             }
         }
 
@@ -370,7 +387,8 @@ class TouchHandler {
         let scrollY = Int32(deltaY * scrollScale)
         
         DispatchQueue.main.async { [weak self] in
-            self?.cursorController.scroll(deltaX: scrollX, deltaY: scrollY)
+            guard let self = self, self.trackpadControlEnabled else { return }
+            self.cursorController.scroll(deltaX: scrollX, deltaY: scrollY)
         }
     }
 }

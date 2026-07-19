@@ -166,6 +166,7 @@ enum ScrollSpeed: String, CaseIterable {
 
 class MenuBarManager {
     private static let remoteTalkActionDefaultsKey = "remoteTalkAction"
+    private static let trackpadControlEnabledDefaultsKey = "trackpadControlEnabled"
     private static let remoteTalkChoices: [(action: ButtonAction, title: String)] = [
         (.spaceKey, "空格"),
         (.rightCmd, "右 Command"),
@@ -181,6 +182,7 @@ class MenuBarManager {
     private var remoteServerQRCode: NSImage?
     private var remoteServerError: String?
     private var remoteTalkAction: ButtonAction = .spaceKey
+    private(set) var trackpadControlEnabled = true
     
     // Button mappings (stored in UserDefaults)
     private var buttonMappings: [String: ButtonAction] = [:]
@@ -204,6 +206,9 @@ class MenuBarManager {
     /// Set by AppDelegate after RemoteWebServer is created.
     var onRemoteServerToggle: ((Bool) -> Void)?
 
+    /// Set by AppDelegate to update touch and physical-click handling immediately.
+    var onTrackpadControlToggle: ((Bool) -> Void)?
+
     init(statusItem: NSStatusItem) {
         self.statusItem = statusItem
         self.menu = NSMenu()
@@ -212,7 +217,16 @@ class MenuBarManager {
         loadMappings()
         loadSwipeMappings()
         loadRemoteTalkAction()
+        loadTrackpadControlEnabled()
         setupMenuBar()
+    }
+
+    private func loadTrackpadControlEnabled() {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: Self.trackpadControlEnabledDefaultsKey) == nil {
+            defaults.set(true, forKey: Self.trackpadControlEnabledDefaultsKey)
+        }
+        trackpadControlEnabled = defaults.bool(forKey: Self.trackpadControlEnabledDefaultsKey)
     }
 
     private func loadRemoteTalkAction() {
@@ -442,6 +456,15 @@ class MenuBarManager {
         }
         swipeItem.submenu = swipeSubmenu
         menu.addItem(swipeItem)
+
+        let trackpadControlItem = NSMenuItem(
+            title: "触控板控制鼠标",
+            action: #selector(toggleTrackpadControl(_:)),
+            keyEquivalent: ""
+        )
+        trackpadControlItem.target = self
+        trackpadControlItem.state = trackpadControlEnabled ? .on : .off
+        menu.addItem(trackpadControlItem)
 
         // iPhone Remote submenu
         let remoteItem = NSMenuItem(title: "iPhone 遥控", action: nil, keyEquivalent: "")
@@ -749,7 +772,9 @@ class MenuBarManager {
         case .f13Key:
             sendKey(kVK_F13)
         case .trackpadClick:
-            performClick()
+            if trackpadControlEnabled {
+                performClick()
+            }
         }
     }
 
@@ -790,6 +815,16 @@ class MenuBarManager {
 
     @objc private func toggleRemoteServer(_ sender: NSMenuItem) {
         onRemoteServerToggle?(!remoteServerEnabled)
+    }
+
+    @objc private func toggleTrackpadControl(_ sender: NSMenuItem) {
+        trackpadControlEnabled.toggle()
+        UserDefaults.standard.set(
+            trackpadControlEnabled,
+            forKey: Self.trackpadControlEnabledDefaultsKey
+        )
+        onTrackpadControlToggle?(trackpadControlEnabled)
+        rebuildMenu()
     }
 
     @objc private func copyRemoteServerURL(_ sender: NSMenuItem) {

@@ -51,6 +51,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             cursorController: cursorController,
             menuBarManager: menuBarManager
         )
+        inputHandler.setTrackpadControlEnabled(menuBarManager.trackpadControlEnabled)
         remoteInputHandler = inputHandler
 
         // Local iPhone PWA. Semantic IDs resolve only to fixed ButtonAction/SwipeAction
@@ -80,12 +81,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         webServer.startFromSavedPreference()
         
         // Start touch handler for trackpad (before remote detection so we can wire the callback)
-        touchHandler = TouchHandler(cursorController: cursorController)
-        touchHandler?.scrollScale = menuBarManager.scrollSpeed.scale
-        touchHandler?.onSwipe = { [weak menuBarManager] direction in
+        let touchInputHandler = TouchHandler(cursorController: cursorController)
+        touchHandler = touchInputHandler
+        touchInputHandler.scrollScale = menuBarManager.scrollSpeed.scale
+        touchInputHandler.setTrackpadControlEnabled(menuBarManager.trackpadControlEnabled)
+        touchInputHandler.onSwipe = { [weak menuBarManager] direction in
             menuBarManager?.executeSwipe(direction)
         }
-        touchHandler?.start()
+        menuBarManager.onTrackpadControlToggle = { [weak inputHandler, weak touchInputHandler] enabled in
+            inputHandler?.setTrackpadControlEnabled(enabled)
+            touchInputHandler?.setTrackpadControlEnabled(enabled)
+        }
+        touchInputHandler.start()
         remoteInputHandler?.onButtonActivity = { [weak self] in
             self?.touchHandler?.tryReconnectTrackpad()
         }

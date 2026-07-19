@@ -33,6 +33,7 @@ class RemoteInputHandler {
     private var isSelectPressed = false
     private var selectPressTime: UInt64 = 0
     private var isDragging = false
+    private var trackpadControlEnabled = true
     private let clickThreshold: Double = 0.25
     
     // Prevent double-processing with MediaKeyInterceptor
@@ -52,6 +53,20 @@ class RemoteInputHandler {
     init(cursorController: CursorController, menuBarManager: MenuBarManager) {
         self.cursorController = cursorController
         self.menuBarManager = menuBarManager
+    }
+
+    func setTrackpadControlEnabled(_ enabled: Bool) {
+        trackpadControlEnabled = enabled
+        guard !enabled else { return }
+
+        // Cancel a pending Select click and release an active drag immediately.
+        isSelectPressed = false
+        cursorController.isClickActive = false
+        if isDragging {
+            cursorController.isDragging = false
+            cursorController.mouseUp()
+        }
+        isDragging = false
     }
     
     func setRemoteDevice(_ device: IOHIDDevice?) {
@@ -126,7 +141,9 @@ class RemoteInputHandler {
 
         // Select is the trackpad click — handled separately for click/drag semantics.
         if buttonName == "select" {
-            handleSelectButton(pressed: intValue == 1)
+            if trackpadControlEnabled {
+                handleSelectButton(pressed: intValue == 1)
+            }
             return
         }
 
@@ -254,7 +271,9 @@ class RemoteInputHandler {
         case .backspace, .spaceKey, .rightCmd, .rightOpt, .f13Key:
             break // handled by handleHoldAction
         case .trackpadClick:
-            cursorController.performClick()
+            if trackpadControlEnabled {
+                cursorController.performClick()
+            }
         }
     }
 
