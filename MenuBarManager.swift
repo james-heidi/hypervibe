@@ -292,6 +292,8 @@ class MenuBarManager {
             for (button, action) in buttonMappings where action.requiresHold && !holdCapableButtons.contains(button) {
                 buttonMappings[button] = ButtonAction.none
             }
+            // Persist merged defaults and sanitization so migrations survive relaunch.
+            saveMappings()
         } else {
             buttonMappings = defaultMappings
             saveMappings()

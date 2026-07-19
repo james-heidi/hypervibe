@@ -32,31 +32,47 @@ fi
 
 echo "Using SDK: $SDK_PATH"
 
-# Detect architecture
-ARCH=$(uname -m)
-if [ "$ARCH" == "arm64" ]; then
-    TARGET="arm64-apple-macosx11.0"
+# Architectures: host-only by default; HYPERVIBE_UNIVERSAL=1 builds arm64+x86_64 and lipo-merges.
+if [ "${HYPERVIBE_UNIVERSAL:-0}" = "1" ]; then
+    TARGETS=("arm64-apple-macosx11.0" "x86_64-apple-macosx11.0")
 else
-    TARGET="x86_64-apple-macosx11.0"
+    ARCH=$(uname -m)
+    if [ "$ARCH" == "arm64" ]; then
+        TARGETS=("arm64-apple-macosx11.0")
+    else
+        TARGETS=("x86_64-apple-macosx11.0")
+    fi
 fi
 
-echo "Building for: $TARGET"
+echo "Building for: ${TARGETS[*]}"
 
-# Build
-xcrun swiftc \
-    -sdk "$SDK_PATH" \
-    -target "$TARGET" \
-    -o HyperVibe \
-    "${SWIFT_FILES[@]}" \
-    -import-objc-header SiriRemote-Bridging-Header.h \
-    -F "$SDK_PATH/System/Library/PrivateFrameworks" \
-    -framework IOKit \
-    -framework CoreGraphics \
-    -framework AudioToolbox \
-    -framework Carbon \
-    -framework AppKit \
-    -framework Network \
-    -framework MultitouchSupport
+# Build one slice per target, then merge.
+SLICES=()
+for TARGET in "${TARGETS[@]}"; do
+    SLICE="HyperVibe.${TARGET%%-*}"
+    xcrun swiftc \
+        -sdk "$SDK_PATH" \
+        -target "$TARGET" \
+        -o "$SLICE" \
+        "${SWIFT_FILES[@]}" \
+        -import-objc-header SiriRemote-Bridging-Header.h \
+        -F "$SDK_PATH/System/Library/PrivateFrameworks" \
+        -framework IOKit \
+        -framework CoreGraphics \
+        -framework AudioToolbox \
+        -framework Carbon \
+        -framework AppKit \
+        -framework Network \
+        -framework MultitouchSupport
+    SLICES+=("$SLICE")
+done
+
+if [ "${#SLICES[@]}" -gt 1 ]; then
+    lipo -create "${SLICES[@]}" -output HyperVibe
+    rm -f "${SLICES[@]}"
+else
+    mv "${SLICES[0]}" HyperVibe
+fi
 
 if [ $? -eq 0 ]; then
     echo ""

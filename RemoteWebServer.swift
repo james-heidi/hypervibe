@@ -592,10 +592,12 @@ final class RemoteWebServer {
 
     private func releaseForSystemSleep() {
         inputHandler?.releaseHeldKeys(sourcePrefix: Self.webSourcePrefix)
+        // Disconnect clients outright: the PWA can't observe Mac sleep, so a stale
+        // "listening" UI would linger. A dropped socket makes it reconnect and reset.
         queue.async { [weak self] in
             guard let self = self else { return }
             for clientID in Array(self.clients.keys) {
-                self.clients[clientID]?.holds.removeAll()
+                self.removeClientLocked(clientID, cancel: true)
             }
         }
     }

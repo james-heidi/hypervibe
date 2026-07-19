@@ -53,8 +53,8 @@ jobs:
           echo "version=$next" >> "$GITHUB_OUTPUT"
           echo "Bump: $bump ($latest -> v$next)"
 
-      - name: Build
-        run: ./build.sh
+      - name: Build (universal)
+        run: HYPERVIBE_UNIVERSAL=1 ./build.sh
 
       - name: Bundle (ad-hoc signed on CI)
         run: ./create_app_bundle.sh
