@@ -780,7 +780,7 @@ final class RemoteWebServer {
           color: #fff7f2;
           border: 1px solid #c96442;
           background: linear-gradient(145deg, #e18a68, #c96442);
-          box-shadow: 7px 8px 13px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ffffff30, inset -2px -2px 3px #000c;
+          box-shadow: 6px 7px 12px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #f4c4ad, inset -2px -2px 3px #8f3d2377;
         }
         #talk .key-label { color: #ffe8dc; }
         #talk.active { transform: translateY(4px) scale(.99); color: #fff; background: linear-gradient(145deg, #b1502e, #8a3a1e); box-shadow: 1px 2px 4px #77736c88, inset 3px 4px 8px #6e1614aa, inset -1px -1px 3px #ffb0a6; }
