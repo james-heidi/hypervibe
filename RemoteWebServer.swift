@@ -725,11 +725,7 @@ final class RemoteWebServer {
             #090a0c;
         }
         main { width: min(100%, 430px); margin: auto; }
-        header { display: flex; align-items: end; justify-content: space-between; margin: 0 7px 12px; }
-        .eyebrow { display: block; color: #8f949d; font: 750 9px/1.2 ui-monospace, SFMono-Regular, monospace; letter-spacing: .19em; }
-        h1 { margin: 4px 0 0; font-size: 20px; line-height: 1; letter-spacing: -.035em; }
-        #status { padding-bottom: 1px; color: #f3b664; font: 650 11px/1 ui-monospace, SFMono-Regular, monospace; }
-        #status::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+        #status { position: absolute; top: 12.5px; right: 12.5px; z-index: 2; width: 7px; height: 7px; border-radius: 50%; color: #f3b664; background: currentColor; box-shadow: 0 0 8px currentColor; }
         #status.ready { color: #73dc91; }
         .faceplate {
           position: relative;
@@ -834,11 +830,8 @@ final class RemoteWebServer {
     </head>
     <body>
       <main>
-        <header>
-          <div><span class="eyebrow">HYPERVIBE</span><h1>Command Pad</h1></div>
-          <span id="status">Connecting…</span>
-        </header>
         <section class="faceplate" aria-label="Mac keyboard remote">
+          <span id="status" role="status" title="Connecting…"></span>
           <div class="deck">
             <div class="top-row">
               <div class="top-macros">
@@ -893,7 +886,7 @@ final class RemoteWebServer {
           };
 
           const setStatus = (text, ready = false) => {
-            status.textContent = text;
+            status.title = text;
             status.classList.toggle('ready', ready);
           };
 
