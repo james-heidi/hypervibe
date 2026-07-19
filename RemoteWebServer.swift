@@ -817,7 +817,6 @@ final class RemoteWebServer {
         .mic-icon { width: 28px; height: 28px; }
         .ultra { min-height: 84px; color: #222; background: linear-gradient(145deg, #ff7765, var(--accent)); box-shadow: 7px 8px 13px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ffc3ba, inset -2px -2px 3px #a8271f88; }
         .ultra .key-label { color: #5b1b17; font-size: 7px; }
-        .hint { margin: 11px 8px 0; text-align: center; color: #777d87; font: 500 10px/1.35 ui-monospace, SFMono-Regular, monospace; }
         @media (max-width: 350px) {
           .faceplate { border-radius: 27px; }
           .deck { gap: 7px; }
@@ -869,7 +868,6 @@ final class RemoteWebServer {
             </div>
           </div>
         </section>
-        <p class="hint">Commands are typed without Enter · keep open for push-to-talk</p>
       </main>
       <script>
         (() => {
