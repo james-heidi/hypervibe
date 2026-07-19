@@ -19,7 +19,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Compute next version
+      - name: Compute next version (conventional commits)
         id: ver
         run: |
           latest=$(git tag --list 'v*' | sort -V | tail -1)
@@ -28,9 +28,30 @@ jobs:
           major=$(echo "$base" | cut -d. -f1)
           minor=$(echo "$base" | cut -d. -f2)
           patch=$(echo "$base" | cut -d. -f3)
-          next="${major}.${minor}.$((patch + 1))"
+
+          if git rev-parse "$latest" >/dev/null 2>&1; then
+            range="$latest..HEAD"
+          else
+            range="HEAD"
+          fi
+          subjects=$(git log --format=%s "$range")
+          bodies=$(git log --format=%B "$range")
+
+          bump=patch
+          if echo "$bodies" | grep -q "BREAKING CHANGE" || \
+             echo "$subjects" | grep -qE '^[a-z]+(\([^)]+\))?!:'; then
+            bump=major
+          elif echo "$subjects" | grep -qE '^feat(\([^)]+\))?:'; then
+            bump=minor
+          fi
+
+          case "$bump" in
+            major) next="$((major + 1)).0.0" ;;
+            minor) next="${major}.$((minor + 1)).0" ;;
+            patch) next="${major}.${minor}.$((patch + 1))" ;;
+          esac
           echo "version=$next" >> "$GITHUB_OUTPUT"
-          echo "Next version: v$next"
+          echo "Bump: $bump ($latest -> v$next)"
 
       - name: Build
         run: ./build.sh
