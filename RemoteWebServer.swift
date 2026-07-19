@@ -743,8 +743,17 @@ final class RemoteWebServer {
         }
         .deck { display: grid; gap: clamp(8px, 2.5vw, 12px); }
         .system-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(6px, 2vw, 10px); }
-        .dpad-row { display: grid; justify-content: center; padding: clamp(4px, 1.5vw, 8px) 0; }
-        .dpad-row .dpad { width: clamp(150px, 44vw, 178px); }
+        .arrow-grid {
+          display: grid;
+          grid-template-areas: ". up ." "left down right";
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: clamp(6px, 2vw, 10px);
+        }
+        .arrow-grid .key { min-height: 58px; }
+        .arrow-up { grid-area: up; }
+        .arrow-left { grid-area: left; }
+        .arrow-down { grid-area: down; }
+        .arrow-right { grid-area: right; }
         .bottom-row { display: grid; grid-template-columns: minmax(0, 1fr) clamp(62px, 18vw, 76px) clamp(62px, 18vw, 76px); gap: clamp(7px, 2vw, 10px); }
         button {
           appearance: none;
@@ -779,22 +788,6 @@ final class RemoteWebServer {
           transform: translateY(4px) scale(.985);
           box-shadow: 1px 2px 4px #77736c88, inset 3px 3px 7px #8e8a825c, inset -1px -1px 3px #fff8;
         }
-        .dpad {
-          position: relative;
-          aspect-ratio: 1;
-          border-radius: 50%;
-          background: radial-gradient(circle at 38% 30%, #31343a, #111216 62%, #050607 100%);
-          box-shadow: 8px 10px 15px #77736c99, -5px -5px 10px #fff, inset 2px 2px 5px #ffffff24, inset -4px -5px 8px #000b;
-        }
-        .dpad-key { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 0; border-radius: 18px; background: transparent; color: #d8dadd; }
-        .dpad-key .glyph { font: 650 17px/1 -apple-system, BlinkMacSystemFont, sans-serif; }
-        .dpad-key .key-label { color: #888d95; font-size: 6px; text-transform: uppercase; }
-        .dpad-key:active { transform: scale(.9); background: #ffffff12; color: #fff; }
-        .dpad-up { top: 4%; left: 24%; width: 52%; height: 36%; }
-        .dpad-down { bottom: 4%; left: 24%; width: 52%; height: 36%; }
-        .dpad-left { top: 24%; left: 4%; width: 36%; height: 52%; }
-        .dpad-right { top: 24%; right: 4%; width: 36%; height: 52%; }
-        .dpad-center { position: absolute; inset: 39%; pointer-events: none; border-radius: 50%; background: #0a0b0d; box-shadow: inset 1px 1px 3px #ffffff1c, 0 1px 2px #000; }
         #talk {
           min-height: 84px;
           color: #f7f5ef;
@@ -827,14 +820,11 @@ final class RemoteWebServer {
               <button class="key white-key" data-action="mode_switch" aria-label="Switch Claude Code mode"><span class="glyph">↪</span><span class="key-label">Mode</span></button>
             </div>
 
-            <div class="dpad-row">
-              <div class="dpad" role="group" aria-label="Arrow keys">
-                <button class="dpad-key dpad-up" data-action="up" aria-label="Up arrow"><span class="glyph">▲</span><span class="key-label">Up</span></button>
-                <button class="dpad-key dpad-down" data-action="down" aria-label="Down arrow"><span class="glyph">▼</span><span class="key-label">Down</span></button>
-                <button class="dpad-key dpad-left" data-action="left" aria-label="Left arrow"><span class="glyph">◀</span><span class="key-label">Left</span></button>
-                <button class="dpad-key dpad-right" data-action="right" aria-label="Right arrow"><span class="glyph">▶</span><span class="key-label">Right</span></button>
-                <span class="dpad-center" aria-hidden="true"></span>
-              </div>
+            <div class="arrow-grid" role="group" aria-label="Arrow keys">
+              <button class="key white-key arrow-up" data-action="up" aria-label="Up arrow"><span class="glyph">↑</span></button>
+              <button class="key white-key arrow-left" data-action="left" aria-label="Left arrow"><span class="glyph">←</span></button>
+              <button class="key white-key arrow-down" data-action="down" aria-label="Down arrow"><span class="glyph">↓</span></button>
+              <button class="key white-key arrow-right" data-action="right" aria-label="Right arrow"><span class="glyph">→</span></button>
             </div>
 
             <div class="bottom-row">
