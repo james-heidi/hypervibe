@@ -741,7 +741,7 @@ final class RemoteWebServer {
           background: linear-gradient(145deg, #ece9e1, var(--plate) 48%, #c5c0b5);
           box-shadow: 0 26px 58px #000b, inset 0 1px #fff, inset 0 -2px 4px #77746d55;
         }
-        .deck { flex: 1; display: grid; grid-template-rows: 1fr 1fr 1fr 1.35fr; gap: clamp(8px, 2.5vw, 12px); }
+        .deck { flex: 1; display: grid; grid-template-rows: 1fr 1.35fr 1fr; gap: clamp(8px, 2.5vw, 12px); }
         button {
           appearance: none;
           min-width: 0;
@@ -786,12 +786,16 @@ final class RemoteWebServer {
         #talk.active { transform: translateY(4px) scale(.99); color: #fff; background: linear-gradient(145deg, #e34d42, #9f251f); box-shadow: 1px 2px 4px #77736c88, inset 3px 4px 8px #6e1614aa, inset -1px -1px 3px #ffb0a6; }
         #talk.active .key-label { color: #fff; }
         .mic-icon { width: 28px; height: 28px; }
-        .backspace, .enter { min-height: 58px; }
+        .enter { color: #16351f; background: linear-gradient(145deg, #b1eec3, #5fce84); box-shadow: 6px 7px 12px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ddffe6, inset -2px -2px 3px #2f7d4a77; }
+        .enter .glyph { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: clamp(19px, 5.5vw, 24px); font-weight: 560; }
+        .enter .key-label { color: #1c5731; }
+        .ctrlc { color: #4a1512; background: linear-gradient(145deg, #ffa294, #e35b4f); box-shadow: 6px 7px 12px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ffd0c7, inset -2px -2px 3px #96271e77; }
+        .ctrlc .key-label { color: #6a1f18; }
         @media (max-width: 350px) {
           .faceplate { border-radius: 27px; }
           .deck { gap: 7px; }
           .key { min-height: 42px; border-radius: 13px; gap: 3px; }
-          #talk, .backspace, .enter { min-height: 52px; }
+          #talk, .enter, .ctrlc { min-height: 52px; }
         }
       </style>
     </head>
@@ -800,10 +804,9 @@ final class RemoteWebServer {
         <section class="faceplate" aria-label="Mac keyboard remote">
           <span id="status" role="status" title="Connecting…"></span>
           <div class="deck">
-            <button class="key white-key backspace" data-hold-action="backspace" data-active-label="Deleting…" aria-label="Hold to delete"><span class="glyph">⌫</span><span class="key-label">Delete</span></button>
-            <button class="key white-key" data-action="ctrlC" aria-label="Control C"><span class="glyph">ϟ</span><span class="key-label">Ctrl+C</span></button>
-            <button class="key white-key enter" data-action="enter" aria-label="Enter"><span class="glyph">✓</span><span class="key-label">Enter</span></button>
+            <button class="key enter" data-action="enter" aria-label="Enter"><span class="glyph">✓</span><span class="key-label">Enter</span></button>
             <button class="key" id="talk" data-hold-action="talk" data-active-label="Listening…" aria-label="Hold to talk"><svg class="mic-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg><span class="key-label">Hold to Talk</span></button>
+            <button class="key ctrlc" data-action="ctrlC" aria-label="Control C"><span class="glyph">ϟ</span><span class="key-label">Ctrl+C</span></button>
           </div>
         </section>
       </main>
