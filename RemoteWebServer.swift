@@ -815,7 +815,8 @@ final class RemoteWebServer {
         #talk.active { transform: translateY(4px) scale(.99); color: #fff; background: linear-gradient(145deg, #e34d42, #9f251f); box-shadow: 1px 2px 4px #77736c88, inset 3px 4px 8px #6e1614aa, inset -1px -1px 3px #ffb0a6; }
         #talk.active .key-label { color: #fff; }
         .mic-icon { width: 28px; height: 28px; }
-        .ultra { min-height: 84px; color: #222; background: linear-gradient(145deg, #ff7765, var(--accent)); box-shadow: 7px 8px 13px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ffc3ba, inset -2px -2px 3px #a8271f88; }
+        .ultra { color: #222; background: linear-gradient(145deg, #ff7765, var(--accent)); box-shadow: 7px 8px 13px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ffc3ba, inset -2px -2px 3px #a8271f88; }
+        .backspace, .enter { min-height: 84px; }
         .ultra .key-label { color: #5b1b17; font-size: 7px; }
         @media (max-width: 350px) {
           .faceplate { border-radius: 27px; }
@@ -823,7 +824,7 @@ final class RemoteWebServer {
           .top-row { grid-template-columns: minmax(0, 1fr) 116px; gap: 7px; }
           .top-macros, .macro-grid, .system-grid { gap: 5px; }
           .key { min-height: 66px; border-radius: 13px; gap: 5px; }
-          #talk, .ultra, .backspace { min-height: 76px; }
+          #talk, .backspace, .enter { min-height: 76px; }
         }
       </style>
     </head>
@@ -856,15 +857,15 @@ final class RemoteWebServer {
 
             <div class="system-grid">
               <button class="key white-key" data-action="ctrlC" aria-label="Control C"><span class="glyph">ϟ</span><span class="key-label">Ctrl+C</span></button>
-              <button class="key white-key" data-action="enter" aria-label="Enter"><span class="glyph">✓</span><span class="key-label">Enter</span></button>
+              <button class="key ultra" data-action="kw_ultrathink" aria-label="Type ultrathink"><span class="glyph">∞</span><span class="key-label">ultrathink</span></button>
               <button class="key white-key" data-action="esc" aria-label="Escape"><span class="glyph">×</span><span class="key-label">Esc</span></button>
               <button class="key white-key" data-action="mode_switch" aria-label="Switch Claude Code mode"><span class="glyph">↪</span><span class="key-label">Mode</span></button>
             </div>
 
             <div class="bottom-row">
               <button class="key" id="talk" data-hold-action="talk" data-active-label="Listening…" aria-label="Hold to talk"><svg class="mic-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg><span class="key-label">Hold to Talk</span></button>
-              <button class="key ultra" data-action="kw_ultrathink" aria-label="Type ultrathink"><span class="glyph">∞</span><span class="key-label">ultrathink</span></button>
               <button class="key white-key backspace" data-hold-action="backspace" data-active-label="Deleting…" aria-label="Hold to delete"><span class="glyph">⌫</span><span class="key-label">Delete</span></button>
+              <button class="key white-key enter" data-action="enter" aria-label="Enter"><span class="glyph">✓</span><span class="key-label">Enter</span></button>
             </div>
           </div>
         </section>
