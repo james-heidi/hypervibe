@@ -818,9 +818,7 @@ final class RemoteWebServer {
         #talk .key-label { color: #b9bcc2; }
         #talk.active { transform: translateY(4px) scale(.99); color: #fff; background: linear-gradient(145deg, #e34d42, #9f251f); box-shadow: 1px 2px 4px #77736c88, inset 3px 4px 8px #6e1614aa, inset -1px -1px 3px #ffb0a6; }
         #talk.active .key-label { color: #fff; }
-        .mic-icon { position: relative; width: 16px; height: 25px; border: 2px solid currentColor; border-radius: 9px; }
-        .mic-icon::before { content: ""; position: absolute; left: -7px; top: 10px; width: 26px; height: 18px; border: 2px solid currentColor; border-top: 0; border-radius: 0 0 15px 15px; }
-        .mic-icon::after { content: ""; position: absolute; left: 6px; top: 27px; width: 2px; height: 6px; background: currentColor; box-shadow: -5px 6px 0 -0.5px currentColor, 5px 6px 0 -0.5px currentColor; }
+        .mic-icon { width: 28px; height: 28px; }
         .ultra { min-height: 84px; color: #222; background: linear-gradient(145deg, #ff7765, var(--accent)); box-shadow: 7px 8px 13px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ffc3ba, inset -2px -2px 3px #a8271f88; }
         .ultra .key-label { color: #5b1b17; font-size: 7px; }
         .hint { margin: 11px 8px 0; text-align: center; color: #777d87; font: 500 10px/1.35 ui-monospace, SFMono-Regular, monospace; }
@@ -872,7 +870,7 @@ final class RemoteWebServer {
             </div>
 
             <div class="bottom-row">
-              <button class="key" id="talk" aria-label="Hold to talk"><span class="mic-icon" aria-hidden="true"></span><span class="key-label" id="talk-label">Hold to Talk</span></button>
+              <button class="key" id="talk" aria-label="Hold to talk"><svg class="mic-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg><span class="key-label" id="talk-label">Hold to Talk</span></button>
               <button class="key ultra" data-action="kw_ultrathink" aria-label="Type ultrathink"><span class="glyph">∞</span><span class="key-label">ultrathink</span></button>
             </div>
           </div>
