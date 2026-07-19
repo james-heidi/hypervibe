@@ -734,6 +734,7 @@ final class RemoteWebServer {
           flex-direction: column;
           padding-bottom: clamp(10px, 3vw, 14px);
           padding: clamp(10px, 3vw, 14px);
+          padding-top: clamp(20px, 6vw, 26px);
           overflow: hidden;
           border: 1px solid #f8f5ed;
           border-radius: 32px;
