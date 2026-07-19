@@ -139,8 +139,10 @@ class RemoteInputHandler {
             return
         }
 
-        // Select is the trackpad click — handled separately for click/drag semantics.
-        if buttonName == "select" {
+        // Select mapped to Mouse Click keeps the special click/drag semantics;
+        // any other mapping falls through to normal button dispatch below.
+        if buttonName == "select",
+           (menuBarManager?.getMapping(for: "select") ?? .trackpadClick) == .trackpadClick {
             if trackpadControlEnabled {
                 handleSelectButton(pressed: intValue == 1)
             }
