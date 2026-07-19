@@ -46,6 +46,9 @@ fi
 
 echo "Building for: ${TARGETS[*]}"
 
+# Remove the previous binary first so a failed build can't get packaged as stale output.
+rm -f HyperVibe
+
 # Build one slice per target, then merge.
 SLICES=()
 for TARGET in "${TARGETS[@]}"; do

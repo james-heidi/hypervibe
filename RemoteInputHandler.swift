@@ -40,6 +40,13 @@ class RemoteInputHandler {
     static var lastProcessedButton: String?
     static var lastProcessedTime: UInt64 = 0
 
+    static func machDeltaToSeconds(from start: UInt64) -> Double {
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        let delta = mach_absolute_time() - start
+        return Double(delta) * Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
+    }
+
     /// Virtual keys currently held down, keyed by the HID button that initiated the hold.
     /// Captured at press time so release can fire the correct keyUp even if the user
     /// rebinds the button mid-hold. Cleared on device removal to avoid stuck modifiers.
@@ -151,8 +158,14 @@ class RemoteInputHandler {
 
         let pressed = (intValue == 1)
 
-        // Debounce only on press — release just closes an existing hold.
+        // Debounce only on press — release just closes an existing hold. Symmetric with
+        // the AVRCP path: whichever delivery arrives first records the press; the mirror
+        // arriving within 200 ms is dropped.
         if pressed {
+            if RemoteInputHandler.lastProcessedButton == buttonName,
+               RemoteInputHandler.machDeltaToSeconds(from: RemoteInputHandler.lastProcessedTime) < 0.2 {
+                return
+            }
             RemoteInputHandler.lastProcessedButton = buttonName
             RemoteInputHandler.lastProcessedTime = mach_absolute_time()
         }

@@ -182,6 +182,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let action = menuBarManager.getMapping(for: buttonName)
         if action != .none {
+            RemoteInputHandler.lastProcessedButton = buttonName
+            RemoteInputHandler.lastProcessedTime = mach_absolute_time()
             menuBarManager.executeAction(action.rawValue)
         }
         // Always consume — no action in this app corresponds to a system media key anymore,
