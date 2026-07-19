@@ -777,18 +777,18 @@ final class RemoteWebServer {
         }
         #talk {
           min-height: 58px;
-          color: #f7f5ef;
-          border: 1px solid #3b3936;
-          background: linear-gradient(145deg, #34322e, #1d1c1a);
+          color: #fff7f2;
+          border: 1px solid #c96442;
+          background: linear-gradient(145deg, #e18a68, #c96442);
           box-shadow: 7px 8px 13px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ffffff30, inset -2px -2px 3px #000c;
         }
-        #talk .key-label { color: #b9bcc2; }
-        #talk.active { transform: translateY(4px) scale(.99); color: #fff; background: linear-gradient(145deg, #d97757, #a84b2f); box-shadow: 1px 2px 4px #77736c88, inset 3px 4px 8px #6e1614aa, inset -1px -1px 3px #ffb0a6; }
+        #talk .key-label { color: #ffe8dc; }
+        #talk.active { transform: translateY(4px) scale(.99); color: #fff; background: linear-gradient(145deg, #b1502e, #8a3a1e); box-shadow: 1px 2px 4px #77736c88, inset 3px 4px 8px #6e1614aa, inset -1px -1px 3px #ffb0a6; }
         #talk.active .key-label { color: #fff; }
         .mic-icon { width: 28px; height: 28px; }
-        .enter { color: #fff7f2; background: linear-gradient(145deg, #e18a68, #c96442); box-shadow: 6px 7px 12px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #f4c4ad, inset -2px -2px 3px #8f3d2377; }
+        .enter { color: #f0eee6; background: linear-gradient(145deg, #34322e, #1d1c1a); border: 1px solid #3b3936; box-shadow: 6px 7px 12px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ffffff28, inset -2px -2px 3px #000c; }
         .enter .glyph { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: clamp(19px, 5.5vw, 24px); font-weight: 560; }
-        .enter .key-label { color: #ffe8dc; }
+        .enter .key-label { color: #b8b4a8; }
         .ctrlc { color: #3d3a30; background: linear-gradient(145deg, #fffdf8, #eae5d9); box-shadow: 6px 7px 12px #77736c99, -4px -4px 9px #fff, inset 1px 1px 1px #fff, inset -1px -2px 2px #b5b0a4; }
         .ctrlc .key-label { color: #6b675c; }
         @media (max-width: 350px) {
