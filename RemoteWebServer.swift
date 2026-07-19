@@ -729,7 +729,7 @@ final class RemoteWebServer {
         #status.ready { color: #73dc91; }
         .faceplate {
           position: relative;
-          padding: clamp(13px, 4vw, 19px);
+          padding: clamp(10px, 3vw, 14px);
           overflow: hidden;
           border: 1px solid #f8f5ed;
           border-radius: 32px;
@@ -760,25 +760,25 @@ final class RemoteWebServer {
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          gap: 7px;
-          min-height: 72px;
-          padding: 9px 4px 8px;
+          gap: 4px;
+          min-height: 46px;
+          padding: 6px 4px 5px;
           border-radius: 15px;
           color: var(--ink);
         }
-        .glyph { font: 720 clamp(17px, 5vw, 24px)/1 ui-monospace, SFMono-Regular, monospace; letter-spacing: -.06em; }
+        .glyph { font: 720 clamp(15px, 4vw, 19px)/1 ui-monospace, SFMono-Regular, monospace; letter-spacing: -.06em; }
         .key-label { max-width: 100%; overflow: hidden; color: #55575a; font: 700 clamp(7px, 2.2vw, 9px)/1.05 ui-monospace, SFMono-Regular, monospace; letter-spacing: .01em; text-overflow: ellipsis; white-space: nowrap; }
         .white-key {
           background: linear-gradient(145deg, #fff, #e8e6e0);
           box-shadow: 6px 7px 12px #77736c99, -4px -4px 9px #fff, inset 1px 1px 1px #fff, inset -1px -2px 2px #aca8a0;
         }
-        .white-key .glyph { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: clamp(23px, 7vw, 31px); font-weight: 540; }
+        .white-key .glyph { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: clamp(19px, 5.5vw, 24px); font-weight: 540; }
         .key:active, .key.active {
           transform: translateY(4px) scale(.985);
           box-shadow: 1px 2px 4px #77736c88, inset 3px 3px 7px #8e8a825c, inset -1px -1px 3px #fff8;
         }
         #talk {
-          min-height: 84px;
+          min-height: 58px;
           color: #f7f5ef;
           border: 1px solid #35373b;
           background: linear-gradient(145deg, #2a2c30, #111215);
@@ -788,13 +788,13 @@ final class RemoteWebServer {
         #talk.active { transform: translateY(4px) scale(.99); color: #fff; background: linear-gradient(145deg, #e34d42, #9f251f); box-shadow: 1px 2px 4px #77736c88, inset 3px 4px 8px #6e1614aa, inset -1px -1px 3px #ffb0a6; }
         #talk.active .key-label { color: #fff; }
         .mic-icon { width: 28px; height: 28px; }
-        .backspace, .enter { min-height: 84px; }
+        .backspace, .enter { min-height: 58px; }
         @media (max-width: 350px) {
           .faceplate { border-radius: 27px; }
           .deck { gap: 7px; }
           .system-grid { gap: 5px; }
-          .key { min-height: 66px; border-radius: 13px; gap: 5px; }
-          #talk, .backspace, .enter { min-height: 76px; }
+          .key { min-height: 42px; border-radius: 13px; gap: 3px; }
+          #talk, .backspace, .enter { min-height: 52px; }
         }
       </style>
     </head>
