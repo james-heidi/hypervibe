@@ -742,9 +742,9 @@ final class RemoteWebServer {
           box-shadow: 0 26px 58px #000b, inset 0 1px #fff, inset 0 -2px 4px #77746d55;
         }
         .deck { display: grid; gap: clamp(8px, 2.5vw, 12px); }
-        .top-row { display: grid; grid-template-columns: minmax(0, 1fr) clamp(122px, 36vw, 148px); gap: clamp(8px, 2.5vw, 12px); }
-        .top-macros { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(6px, 1.8vw, 9px); }
-        .macro-grid, .system-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(6px, 2vw, 10px); }
+        .system-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(6px, 2vw, 10px); }
+        .dpad-row { display: grid; justify-content: center; padding: clamp(4px, 1.5vw, 8px) 0; }
+        .dpad-row .dpad { width: clamp(150px, 44vw, 178px); }
         .bottom-row { display: grid; grid-template-columns: minmax(0, 1fr) clamp(62px, 18vw, 76px) clamp(62px, 18vw, 76px); gap: clamp(7px, 2vw, 10px); }
         button {
           appearance: none;
@@ -770,15 +770,6 @@ final class RemoteWebServer {
         }
         .glyph { font: 720 clamp(17px, 5vw, 24px)/1 ui-monospace, SFMono-Regular, monospace; letter-spacing: -.06em; }
         .key-label { max-width: 100%; overflow: hidden; color: #55575a; font: 700 clamp(7px, 2.2vw, 9px)/1.05 ui-monospace, SFMono-Regular, monospace; letter-spacing: .01em; text-overflow: ellipsis; white-space: nowrap; }
-        .macro {
-          border: 1px solid #ffffff88;
-          background: linear-gradient(145deg, #ffffff70, #a9a69e4d);
-          box-shadow: 6px 7px 12px #77736c88, -4px -4px 9px #ffffffa8, inset 1px 1px 1px #fff9, inset -1px -1px 2px #6d696250;
-          backdrop-filter: blur(8px);
-          -webkit-backdrop-filter: blur(8px);
-        }
-        .top-macros .key { min-height: 100%; padding-inline: 2px; }
-        .top-macros .glyph { font-size: clamp(14px, 4vw, 20px); }
         .white-key {
           background: linear-gradient(145deg, #fff, #e8e6e0);
           box-shadow: 6px 7px 12px #77736c99, -4px -4px 9px #fff, inset 1px 1px 1px #fff, inset -1px -2px 2px #aca8a0;
@@ -815,14 +806,11 @@ final class RemoteWebServer {
         #talk.active { transform: translateY(4px) scale(.99); color: #fff; background: linear-gradient(145deg, #e34d42, #9f251f); box-shadow: 1px 2px 4px #77736c88, inset 3px 4px 8px #6e1614aa, inset -1px -1px 3px #ffb0a6; }
         #talk.active .key-label { color: #fff; }
         .mic-icon { width: 28px; height: 28px; }
-        .ultra { color: #222; background: linear-gradient(145deg, #ff7765, var(--accent)); box-shadow: 7px 8px 13px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ffc3ba, inset -2px -2px 3px #a8271f88; }
         .backspace, .enter { min-height: 84px; }
-        .ultra .key-label { color: #5b1b17; font-size: 7px; }
         @media (max-width: 350px) {
           .faceplate { border-radius: 27px; }
           .deck { gap: 7px; }
-          .top-row { grid-template-columns: minmax(0, 1fr) 116px; gap: 7px; }
-          .top-macros, .macro-grid, .system-grid { gap: 5px; }
+          .system-grid { gap: 5px; }
           .key { min-height: 66px; border-radius: 13px; gap: 5px; }
           #talk, .backspace, .enter { min-height: 76px; }
         }
@@ -833,12 +821,13 @@ final class RemoteWebServer {
         <section class="faceplate" aria-label="Mac keyboard remote">
           <span id="status" role="status" title="Connecting…"></span>
           <div class="deck">
-            <div class="top-row">
-              <div class="top-macros">
-                <button class="key macro" data-action="cmd_model" aria-label="Type slash model"><span class="glyph">/M</span><span class="key-label">/model</span></button>
-                <button class="key macro" data-action="cmd_compact" aria-label="Type slash compact"><span class="glyph">/C</span><span class="key-label">/compact</span></button>
-                <button class="key macro" data-action="cmd_usage" aria-label="Type slash usage"><span class="glyph">%</span><span class="key-label">/usage</span></button>
-              </div>
+            <div class="system-grid">
+              <button class="key white-key" data-action="ctrlC" aria-label="Control C"><span class="glyph">ϟ</span><span class="key-label">Ctrl+C</span></button>
+              <button class="key white-key" data-action="esc" aria-label="Escape"><span class="glyph">×</span><span class="key-label">Esc</span></button>
+              <button class="key white-key" data-action="mode_switch" aria-label="Switch Claude Code mode"><span class="glyph">↪</span><span class="key-label">Mode</span></button>
+            </div>
+
+            <div class="dpad-row">
               <div class="dpad" role="group" aria-label="Arrow keys">
                 <button class="dpad-key dpad-up" data-action="up" aria-label="Up arrow"><span class="glyph">▲</span><span class="key-label">Up</span></button>
                 <button class="dpad-key dpad-down" data-action="down" aria-label="Down arrow"><span class="glyph">▼</span><span class="key-label">Down</span></button>
@@ -846,20 +835,6 @@ final class RemoteWebServer {
                 <button class="dpad-key dpad-right" data-action="right" aria-label="Right arrow"><span class="glyph">▶</span><span class="key-label">Right</span></button>
                 <span class="dpad-center" aria-hidden="true"></span>
               </div>
-            </div>
-
-            <div class="macro-grid">
-              <button class="key macro" data-action="cmd_context" aria-label="Type slash context"><span class="glyph">{ }</span><span class="key-label">/context</span></button>
-              <button class="key macro" data-action="cmd_effort" aria-label="Type slash effort"><span class="glyph">◐</span><span class="key-label">/effort</span></button>
-              <button class="key macro" data-action="cmd_tasks" aria-label="Type slash tasks"><span class="glyph">☷</span><span class="key-label">/tasks</span></button>
-              <button class="key macro" data-action="cmd_init" aria-label="Type slash init"><span class="glyph">I/O</span><span class="key-label">/init</span></button>
-            </div>
-
-            <div class="system-grid">
-              <button class="key white-key" data-action="ctrlC" aria-label="Control C"><span class="glyph">ϟ</span><span class="key-label">Ctrl+C</span></button>
-              <button class="key ultra" data-action="kw_ultrathink" aria-label="Type ultrathink"><span class="glyph">∞</span><span class="key-label">ultrathink</span></button>
-              <button class="key white-key" data-action="esc" aria-label="Escape"><span class="glyph">×</span><span class="key-label">Esc</span></button>
-              <button class="key white-key" data-action="mode_switch" aria-label="Switch Claude Code mode"><span class="glyph">↪</span><span class="key-label">Mode</span></button>
             </div>
 
             <div class="bottom-row">
