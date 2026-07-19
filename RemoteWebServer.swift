@@ -749,7 +749,7 @@ final class RemoteWebServer {
         .top-row { display: grid; grid-template-columns: minmax(0, 1fr) clamp(122px, 36vw, 148px); gap: clamp(8px, 2.5vw, 12px); }
         .top-macros { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(6px, 1.8vw, 9px); }
         .macro-grid, .system-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(6px, 2vw, 10px); }
-        .bottom-row { display: grid; grid-template-columns: minmax(0, 1fr) clamp(70px, 20vw, 82px); gap: clamp(8px, 2.5vw, 12px); }
+        .bottom-row { display: grid; grid-template-columns: minmax(0, 1fr) clamp(62px, 18vw, 76px) clamp(62px, 18vw, 76px); gap: clamp(7px, 2vw, 10px); }
         button {
           appearance: none;
           min-width: 0;
@@ -828,7 +828,7 @@ final class RemoteWebServer {
           .top-row { grid-template-columns: minmax(0, 1fr) 116px; gap: 7px; }
           .top-macros, .macro-grid, .system-grid { gap: 5px; }
           .key { min-height: 66px; border-radius: 13px; gap: 5px; }
-          #talk, .ultra { min-height: 76px; }
+          #talk, .ultra, .backspace { min-height: 76px; }
         }
       </style>
     </head>
@@ -870,8 +870,9 @@ final class RemoteWebServer {
             </div>
 
             <div class="bottom-row">
-              <button class="key" id="talk" aria-label="Hold to talk"><svg class="mic-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg><span class="key-label" id="talk-label">Hold to Talk</span></button>
+              <button class="key" id="talk" data-hold-action="talk" data-active-label="Listening…" aria-label="Hold to talk"><svg class="mic-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg><span class="key-label">Hold to Talk</span></button>
               <button class="key ultra" data-action="kw_ultrathink" aria-label="Type ultrathink"><span class="glyph">∞</span><span class="key-label">ultrathink</span></button>
+              <button class="key white-key backspace" data-hold-action="backspace" data-active-label="Deleting…" aria-label="Hold to delete"><span class="glyph">⌫</span><span class="key-label">Delete</span></button>
             </div>
           </div>
         </section>
@@ -881,12 +882,9 @@ final class RemoteWebServer {
         (() => {
           const token = new URLSearchParams(location.search).get('token') || '';
           const status = document.getElementById('status');
-          const talk = document.getElementById('talk');
-          const talkLabel = document.getElementById('talk-label');
           let socket = null;
           let reconnectTimer = null;
-          let activePressID = null;
-          let heartbeatTimer = null;
+          const activeHolds = new Map();
 
           const send = payload => {
             if (!socket || socket.readyState !== WebSocket.OPEN) return false;
@@ -899,15 +897,18 @@ final class RemoteWebServer {
             status.classList.toggle('ready', ready);
           };
 
-          const releaseTalk = (notifyServer = true) => {
-            if (!activePressID) return;
-            const pressID = activePressID;
-            activePressID = null;
-            clearInterval(heartbeatTimer);
-            heartbeatTimer = null;
-            talk.classList.remove('active');
-            talkLabel.textContent = 'Hold to Talk';
-            if (notifyServer) send({ type: 'up', pressID });
+          const releaseHold = (button, notifyServer = true, pointerID = null) => {
+            const hold = activeHolds.get(button);
+            if (!hold || (pointerID !== null && hold.pointerID !== pointerID)) return;
+            activeHolds.delete(button);
+            clearInterval(hold.heartbeatTimer);
+            button.classList.remove('active');
+            hold.label.textContent = hold.idleLabel;
+            if (notifyServer) send({ type: 'up', pressID: hold.pressID });
+          };
+
+          const releaseAllHolds = (notifyServer = true) => {
+            Array.from(activeHolds.keys()).forEach(button => releaseHold(button, notifyServer));
           };
 
           const connect = () => {
@@ -922,7 +923,7 @@ final class RemoteWebServer {
               if (message.type === 'error') setStatus(message.message || 'Action rejected');
             });
             socket.addEventListener('close', () => {
-              releaseTalk(false);
+              releaseAllHolds(false);
               setStatus('Reconnecting…');
               reconnectTimer = setTimeout(connect, 1000);
             });
@@ -938,29 +939,36 @@ final class RemoteWebServer {
             });
           });
 
-          talk.addEventListener('pointerdown', event => {
-            event.preventDefault();
-            if (activePressID || !socket || socket.readyState !== WebSocket.OPEN) return;
-            talk.setPointerCapture?.(event.pointerId);
-            activePressID = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-            talk.classList.add('active');
-            talkLabel.textContent = 'Listening…';
-            send({ type: 'down', actionID: 'talk', pressID: activePressID });
-            heartbeatTimer = setInterval(() => {
-              if (activePressID) send({ type: 'heartbeat', pressID: activePressID });
-            }, 400);
-            navigator.vibrate?.(20);
+          document.querySelectorAll('button[data-hold-action]').forEach(button => {
+            const label = button.querySelector('.key-label');
+            const idleLabel = label.textContent;
+
+            button.addEventListener('pointerdown', event => {
+              event.preventDefault();
+              if (activeHolds.has(button) || !socket || socket.readyState !== WebSocket.OPEN) return;
+              button.setPointerCapture?.(event.pointerId);
+              const pressID = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+              const heartbeatTimer = setInterval(() => {
+                const hold = activeHolds.get(button);
+                if (hold) send({ type: 'heartbeat', pressID: hold.pressID });
+              }, 400);
+              activeHolds.set(button, { pressID, heartbeatTimer, pointerID: event.pointerId, label, idleLabel });
+              button.classList.add('active');
+              label.textContent = button.dataset.activeLabel;
+              send({ type: 'down', actionID: button.dataset.holdAction, pressID });
+              navigator.vibrate?.(20);
+            });
+            button.addEventListener('pointerup', event => releaseHold(button, true, event.pointerId));
+            button.addEventListener('pointercancel', event => releaseHold(button, true, event.pointerId));
+            button.addEventListener('lostpointercapture', event => releaseHold(button, true, event.pointerId));
+            button.addEventListener('touchcancel', event => { event.preventDefault(); releaseHold(button); }, { passive: false });
           });
-          talk.addEventListener('pointerup', () => releaseTalk());
-          talk.addEventListener('pointercancel', () => releaseTalk());
-          talk.addEventListener('lostpointercapture', () => releaseTalk());
-          talk.addEventListener('touchcancel', event => { event.preventDefault(); releaseTalk(); }, { passive: false });
 
           document.addEventListener('visibilitychange', () => {
-            if (document.hidden) releaseTalk();
+            if (document.hidden) releaseAllHolds();
           });
           window.addEventListener('pagehide', () => {
-            releaseTalk();
+            releaseAllHolds();
             socket?.close();
           });
           connect();

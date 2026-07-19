@@ -246,7 +246,7 @@ class RemoteInputHandler {
             sendKey(kVK_Escape)
         case .ctrlC:
             sendKey(kVK_ANSI_C, flags: .maskControl)
-        case .spaceKey, .rightCmd, .rightOpt:
+        case .backspace, .spaceKey, .rightCmd, .rightOpt:
             break // handled by handleHoldAction
         case .trackpadClick:
             cursorController.performClick()
@@ -268,10 +268,11 @@ class RemoteInputHandler {
         }
     }
 
-    /// Press/release a virtual key mirroring the HID press duration (push-to-talk).
+    /// Press/release a virtual key mirroring the source press duration, with system-like repeat.
     private func handleHoldAction(_ action: ButtonAction, button: String, pressed: Bool) {
         let spec: (keyCode: Int, flags: CGEventFlags)
         switch action {
+        case .backspace: spec = (kVK_Delete,       [])
         case .spaceKey: spec = (kVK_Space,        [])
         case .rightCmd: spec = (kVK_RightCommand, .maskCommand)
         case .rightOpt: spec = (kVK_RightOption,  .maskAlternate)

@@ -17,6 +17,7 @@ enum ButtonAction: String, CaseIterable {
     case leftKey = "Left: Navigate Left"
     case rightKey = "Right: Navigate Right"
     case escKey = "Esc: Navigate Back"
+    case backspace = "Backspace: Delete"
     case ctrlC = "Control + C: Cancel Prompt"
     case spaceKey = "Space: Claude Voice Dictation"
     case rightCmd = "Right Command: 3rd-party Voice Dictation"
@@ -24,12 +25,12 @@ enum ButtonAction: String, CaseIterable {
     case trackpadClick = "Mouse Click"
     case none = "None"
 
-    /// Push-to-talk dictation needs the virtual key held for the full press duration.
+    /// Duration-sensitive actions need the virtual key held for the full physical press.
     /// Only a subset of HID buttons emit reliable release events, so these actions are
-    /// only offered for hold-capable buttons.
+    /// offered only for hold-capable buttons.
     var requiresHold: Bool {
         switch self {
-        case .spaceKey, .rightCmd, .rightOpt: return true
+        case .backspace, .spaceKey, .rightCmd, .rightOpt: return true
         default: return false
         }
     }
@@ -44,6 +45,7 @@ enum ButtonAction: String, CaseIterable {
         case "down": return .downKey
         case "left": return .leftKey
         case "right": return .rightKey
+        case "backspace": return .backspace
         case "ctrlC": return .ctrlC
         case "talk": return pushToTalkAction.requiresHold ? pushToTalkAction : nil
         default: return nil
@@ -310,7 +312,7 @@ class MenuBarManager {
             let canHold = holdCapableButtons.contains(key)
 
             for action in ButtonAction.allCases {
-                // Voice-dictation actions require press+release tracking; hide them on tap-only buttons.
+                // Hold actions require press+release tracking; hide them on tap-only buttons.
                 if action.requiresHold && !canHold { continue }
                 // Mouse Click is only meaningful for the trackpad click button.
                 if action == .trackpadClick && key != "select" { continue }
@@ -629,6 +631,8 @@ class MenuBarManager {
             sendKey(kVK_RightArrow)
         case .escKey:
             sendKey(kVK_Escape)
+        case .backspace:
+            sendKey(kVK_Delete)
         case .ctrlC:
             sendKey(kVK_ANSI_C, flags: .maskControl)
         case .spaceKey:
