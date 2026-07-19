@@ -147,13 +147,13 @@ final class RemoteWebServer {
             publishStatus(Status(
                 enabled: true,
                 connectURL: nil,
-                error: "No private LAN address"
+                error: "未找到私有局域网地址"
             ))
             return
         }
         guard let httpPort = NWEndpoint.Port(rawValue: Self.httpPortValue),
               let webSocketPort = NWEndpoint.Port(rawValue: Self.webSocketPortValue) else {
-            publishStatus(Status(enabled: true, connectURL: nil, error: "Invalid port"))
+            publishStatus(Status(enabled: true, connectURL: nil, error: "端口无效"))
             return
         }
 
@@ -299,7 +299,7 @@ final class RemoteWebServer {
                 requestData.append(data)
             }
             if requestData.count > 16_384 {
-                self.sendHTTPResponse(connection, status: "413 Payload Too Large", contentType: "text/plain", body: Data("Request too large".utf8))
+                self.sendHTTPResponse(connection, status: "413 Payload Too Large", contentType: "text/plain", body: Data("请求过大".utf8))
                 return
             }
 
@@ -317,19 +317,19 @@ final class RemoteWebServer {
     private func handleHTTPRequest(_ connection: NWConnection, data: Data) {
         guard let request = String(data: data, encoding: .utf8),
               let firstLine = request.components(separatedBy: "\r\n").first else {
-            sendHTTPResponse(connection, status: "400 Bad Request", contentType: "text/plain", body: Data("Bad request".utf8))
+            sendHTTPResponse(connection, status: "400 Bad Request", contentType: "text/plain", body: Data("请求无效".utf8))
             return
         }
         let parts = firstLine.split(separator: " ", maxSplits: 2).map(String.init)
         guard parts.count == 3, parts[0] == "GET",
               let components = URLComponents(string: "http://localhost\(parts[1])") else {
-            sendHTTPResponse(connection, status: "405 Method Not Allowed", contentType: "text/plain", body: Data("GET required".utf8))
+            sendHTTPResponse(connection, status: "405 Method Not Allowed", contentType: "text/plain", body: Data("仅支持 GET 请求".utf8))
             return
         }
 
         let suppliedToken = components.queryItems?.first(where: { $0.name == "token" })?.value
         guard suppliedToken == token else {
-            sendHTTPResponse(connection, status: "403 Forbidden", contentType: "text/plain", body: Data("Invalid HyperVibe token".utf8))
+            sendHTTPResponse(connection, status: "403 Forbidden", contentType: "text/plain", body: Data("HyperVibe 令牌无效".utf8))
             return
         }
 
@@ -342,7 +342,7 @@ final class RemoteWebServer {
         case "/icon.svg":
             sendHTTPResponse(connection, status: "200 OK", contentType: "image/svg+xml", body: Data(Self.iconSVG.utf8))
         default:
-            sendHTTPResponse(connection, status: "404 Not Found", contentType: "text/plain", body: Data("Not found".utf8))
+            sendHTTPResponse(connection, status: "404 Not Found", contentType: "text/plain", body: Data("未找到页面".utf8))
         }
     }
 
@@ -366,7 +366,7 @@ final class RemoteWebServer {
 
     private func manifestData() -> Data {
         let manifest: [String: Any] = [
-            "name": "HyperVibe Remote",
+            "name": "HyperVibe",
             "short_name": "HyperVibe",
             "start_url": "/?token=\(token)",
             "scope": "/",
@@ -457,13 +457,13 @@ final class RemoteWebServer {
         switch type {
         case "tap":
             guard let actionID = message["actionID"] as? String else {
-                sendError("Unknown tap action", to: client.connection)
+                sendError("未知点击操作", to: client.connection)
                 return
             }
 
             if let action = resolveAction(actionID) {
                 guard !action.requiresHold else {
-                    sendError("Unknown tap action", to: client.connection)
+                    sendError("未知点击操作", to: client.connection)
                     return
                 }
                 let sourceID = "\(client.sourcePrefix)tap:\(UUID().uuidString)"
@@ -473,7 +473,7 @@ final class RemoteWebServer {
             } else if let command = SwipeAction.remoteAction(for: actionID) {
                 performCommand(command)
             } else {
-                sendError("Unknown tap action", to: client.connection)
+                sendError("未知点击操作", to: client.connection)
             }
 
         case "down":
@@ -481,7 +481,7 @@ final class RemoteWebServer {
                   let pressID = validPressID(message["pressID"]),
                   let action = resolveAction(actionID),
                   action.requiresHold else {
-                sendError("Unknown hold action", to: client.connection)
+                sendError("未知按住操作", to: client.connection)
                 return
             }
             if client.holds[pressID] == nil {
@@ -511,7 +511,7 @@ final class RemoteWebServer {
             }
 
         default:
-            sendError("Unknown message type", to: client.connection)
+            sendError("未知消息类型", to: client.connection)
         }
     }
 
@@ -693,7 +693,7 @@ final class RemoteWebServer {
 
     private static let htmlTemplate = #"""
     <!doctype html>
-    <html lang="en">
+    <html lang="zh-CN">
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
@@ -703,7 +703,7 @@ final class RemoteWebServer {
       <meta name="apple-mobile-web-app-title" content="HyperVibe">
       <link rel="manifest" href="/manifest.webmanifest?token=__TOKEN__">
       <link rel="apple-touch-icon" href="/icon.svg?token=__TOKEN__">
-      <title>HyperVibe Remote</title>
+      <title>HyperVibe</title>
       <style>
         :root {
           color-scheme: dark;
@@ -801,12 +801,12 @@ final class RemoteWebServer {
     </head>
     <body>
       <main>
-        <section class="faceplate" aria-label="Mac keyboard remote">
-          <span id="status" role="status" title="Connecting…"></span>
+        <section class="faceplate" aria-label="Mac 键盘遥控器">
+          <span id="status" role="status" title="连接中…"></span>
           <div class="deck">
-            <button class="key enter" data-action="enter" aria-label="Enter"><span class="glyph">✓</span><span class="key-label">Enter</span></button>
-            <button class="key" id="talk" data-hold-action="talk" data-active-label="Listening…" aria-label="Hold to talk"><svg class="mic-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg><span class="key-label">Hold to Talk</span></button>
-            <button class="key ctrlc" data-action="ctrlC" aria-label="Control C"><span class="glyph">ϟ</span><span class="key-label">Ctrl+C</span></button>
+            <button class="key enter" data-action="enter" aria-label="发送"><span class="glyph">✓</span><span class="key-label">发送</span></button>
+            <button class="key" id="talk" data-hold-action="talk" data-active-label="聆听中…" aria-label="按住说话"><svg class="mic-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg><span class="key-label">按住说话</span></button>
+            <button class="key ctrlc" data-action="ctrlC" aria-label="Ctrl+C"><span class="glyph">ϟ</span><span class="key-label">Ctrl+C</span></button>
           </div>
         </section>
       </main>
@@ -845,18 +845,18 @@ final class RemoteWebServer {
 
           const connect = () => {
             clearTimeout(reconnectTimer);
-            setStatus('Connecting…');
+            setStatus('连接中…');
             socket = new WebSocket(`ws://${location.hostname}:8766/`);
             socket.addEventListener('open', () => send({ type: 'auth', token }));
             socket.addEventListener('message', event => {
               let message;
               try { message = JSON.parse(event.data); } catch { return; }
-              if (message.type === 'ready') setStatus('Connected', true);
-              if (message.type === 'error') setStatus(message.message || 'Action rejected');
+              if (message.type === 'ready') setStatus('已连接', true);
+              if (message.type === 'error') setStatus(message.message || '操作被拒绝');
             });
             socket.addEventListener('close', () => {
               releaseAllHolds(false);
-              setStatus('Reconnecting…');
+              setStatus('重新连接中…');
               reconnectTimer = setTimeout(connect, 1000);
             });
             socket.addEventListener('error', () => socket.close());

@@ -26,6 +26,25 @@ enum ButtonAction: String, CaseIterable {
     case trackpadClick = "Mouse Click"
     case none = "None"
 
+    var displayName: String {
+        switch self {
+        case .enterKey: return "Enter:发送"
+        case .upKey: return "上:向上导航"
+        case .downKey: return "下:向下导航"
+        case .leftKey: return "左:向左导航"
+        case .rightKey: return "右:向右导航"
+        case .escKey: return "Esc:返回"
+        case .backspace: return "退格:删除"
+        case .ctrlC: return "Control + C:取消提示"
+        case .spaceKey: return "空格:Claude 语音听写"
+        case .rightCmd: return "右 Command:第三方语音听写"
+        case .rightOpt: return "右 Option:第三方语音听写"
+        case .f13Key: return "F13:自定义听写键"
+        case .trackpadClick: return "鼠标点击"
+        case .none: return "无"
+        }
+    }
+
     /// Duration-sensitive actions need the virtual key held for the full physical press.
     /// Only a subset of HID buttons emit reliable release events, so these actions are
     /// offered only for hold-capable buttons.
@@ -69,7 +88,8 @@ enum SwipeDirection: String, CaseIterable {
 
 /// Action a swipe can trigger. Slash-command cases type the raw value (without Enter — user
 /// presses Enter themselves). `leftArrow`/`rightArrow` send virtual arrow keys instead of text.
-/// `init` is a Swift keyword so the case name is backtick-escaped; rawValue "/init" is what displays.
+/// `init` is a Swift keyword so the case name is backtick-escaped. Raw values remain stable for
+/// persistence and typing; `displayName` is used only for menu presentation.
 enum SwipeAction: String, CaseIterable {
     // Priority order: direction-matched arrow (filtered per submenu), then Mode Switching,
     // then ultrathink, then slash commands alphabetically, None last.
@@ -89,6 +109,27 @@ enum SwipeAction: String, CaseIterable {
     case tasks         = "/tasks"
     case usage         = "/usage"
     case none          = "None"
+
+    var displayName: String {
+        switch self {
+        case .leftArrow: return "左:向左导航"
+        case .rightArrow: return "右:向右导航"
+        case .modeSwitch: return "模式切换 (Shift + Tab)"
+        case .ultrathink: return "ultrathink"
+        case .btw: return "/btw"
+        case .compact: return "/compact"
+        case .config: return "/config"
+        case .context: return "/context"
+        case .effort: return "/effort"
+        case .`init`: return "/init"
+        case .model: return "/model"
+        case .remoteControl: return "/remote-control"
+        case .schedule: return "/schedule"
+        case .tasks: return "/tasks"
+        case .usage: return "/usage"
+        case .none: return "无"
+        }
+    }
 
     /// Fixed semantic allowlist for tap actions from the iPhone remote.
     /// The phone never supplies text, key codes, or shortcut flags.
@@ -126,9 +167,9 @@ enum ScrollSpeed: String, CaseIterable {
 class MenuBarManager {
     private static let remoteTalkActionDefaultsKey = "remoteTalkAction"
     private static let remoteTalkChoices: [(action: ButtonAction, title: String)] = [
-        (.spaceKey, "Space"),
-        (.rightCmd, "Right Command"),
-        (.rightOpt, "Right Option"),
+        (.spaceKey, "空格"),
+        (.rightCmd, "右 Command"),
+        (.rightOpt, "右 Option"),
         (.f13Key, "F13"),
     ]
     
@@ -166,7 +207,7 @@ class MenuBarManager {
     init(statusItem: NSStatusItem) {
         self.statusItem = statusItem
         self.menu = NSMenu()
-        self.statusMenuItem = NSMenuItem(title: "Status: Disconnected", action: nil, keyEquivalent: "")
+        self.statusMenuItem = NSMenuItem(title: "状态:未连接", action: nil, keyEquivalent: "")
         
         loadMappings()
         loadSwipeMappings()
@@ -311,7 +352,7 @@ class MenuBarManager {
         menu.removeAllItems()
         
         // Title
-        let titleItem = NSMenuItem(title: "Siri Remote", action: nil, keyEquivalent: "")
+        let titleItem = NSMenuItem(title: "Siri 遥控器", action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
         menu.addItem(titleItem)
         
@@ -324,22 +365,22 @@ class MenuBarManager {
         menu.addItem(NSMenuItem.separator())
         
         // Button Mappings submenu
-        let mappingsItem = NSMenuItem(title: "Button Mappings", action: nil, keyEquivalent: "")
+        let mappingsItem = NSMenuItem(title: "按键映射", action: nil, keyEquivalent: "")
         let mappingsSubmenu = NSMenu()
         
         let buttons = [
-            ("select", "Trackpad Click"),
-            ("ringUp", "Ring Up"),
-            ("ringDown", "Ring Down"),
-            ("ringLeft", "Ring Left"),
-            ("ringRight", "Ring Right"),
-            ("menu", "Menu Button"),
-            ("tv", "TV Button"),
-            ("siri", "Siri Button"),
-            ("playPause", "Play/Pause Button"),
-            ("volumeUp", "Volume Up"),
-            ("volumeDown", "Volume Down"),
-            ("mute", "Mute"),
+            ("select", "触控板点击"),
+            ("ringUp", "环上"),
+            ("ringDown", "环下"),
+            ("ringLeft", "环左"),
+            ("ringRight", "环右"),
+            ("menu", "菜单键"),
+            ("tv", "TV 键"),
+            ("siri", "Siri 键"),
+            ("playPause", "播放/暂停"),
+            ("volumeUp", "音量+"),
+            ("volumeDown", "音量−"),
+            ("mute", "静音键"),
         ]
         
         for (key, label) in buttons {
@@ -353,7 +394,7 @@ class MenuBarManager {
                 // Mouse Click is only meaningful for the trackpad click button.
                 if action == .trackpadClick && key != "select" { continue }
 
-                let actionItem = NSMenuItem(title: action.rawValue, action: #selector(changeMapping(_:)), keyEquivalent: "")
+                let actionItem = NSMenuItem(title: action.displayName, action: #selector(changeMapping(_:)), keyEquivalent: "")
                 actionItem.target = self
                 actionItem.representedObject = (key, action)
 
@@ -372,13 +413,13 @@ class MenuBarManager {
         menu.addItem(mappingsItem)
 
         // Swipe Gestures submenu
-        let swipeItem = NSMenuItem(title: "Swipe Gestures", action: nil, keyEquivalent: "")
+        let swipeItem = NSMenuItem(title: "滑动手势", action: nil, keyEquivalent: "")
         let swipeSubmenu = NSMenu()
         let swipes: [(SwipeDirection, String)] = [
-            (.up,    "Swipe Up"),
-            (.down,  "Swipe Down"),
-            (.left,  "Swipe Left"),
-            (.right, "Swipe Right"),
+            (.up,    "上滑"),
+            (.down,  "下滑"),
+            (.left,  "左滑"),
+            (.right, "右滑"),
         ]
         for (direction, label) in swipes {
             let dirItem = NSMenuItem(title: label, action: nil, keyEquivalent: "")
@@ -388,7 +429,7 @@ class MenuBarManager {
                 if action == .leftArrow  && direction != .left  { continue }
                 if action == .rightArrow && direction != .right { continue }
 
-                let actionItem = NSMenuItem(title: action.rawValue, action: #selector(changeSwipeMapping(_:)), keyEquivalent: "")
+                let actionItem = NSMenuItem(title: action.displayName, action: #selector(changeSwipeMapping(_:)), keyEquivalent: "")
                 actionItem.target = self
                 actionItem.representedObject = (direction, action)
                 if swipeMappings[direction] == action {
@@ -403,11 +444,11 @@ class MenuBarManager {
         menu.addItem(swipeItem)
 
         // iPhone Remote submenu
-        let remoteItem = NSMenuItem(title: "iPhone Remote", action: nil, keyEquivalent: "")
+        let remoteItem = NSMenuItem(title: "iPhone 遥控", action: nil, keyEquivalent: "")
         let remoteSubmenu = NSMenu()
 
         let enabledItem = NSMenuItem(
-            title: "Enabled",
+            title: "启用",
             action: #selector(toggleRemoteServer(_:)),
             keyEquivalent: ""
         )
@@ -415,7 +456,7 @@ class MenuBarManager {
         enabledItem.state = remoteServerEnabled ? .on : .off
         remoteSubmenu.addItem(enabledItem)
 
-        let talkKeyItem = NSMenuItem(title: "Push-to-Talk Key", action: nil, keyEquivalent: "")
+        let talkKeyItem = NSMenuItem(title: "按住说话键", action: nil, keyEquivalent: "")
         let talkKeySubmenu = NSMenu()
         for choice in Self.remoteTalkChoices {
             let choiceItem = NSMenuItem(
@@ -434,31 +475,31 @@ class MenuBarManager {
         if remoteServerEnabled {
             if let url = remoteServerURL {
                 let urlItem = NSMenuItem(
-                    title: "Connect: \(url)",
+                    title: "连接: \(url)",
                     action: #selector(copyRemoteServerURL(_:)),
                     keyEquivalent: ""
                 )
                 urlItem.target = self
-                urlItem.toolTip = "Click to copy the iPhone remote URL"
+                urlItem.toolTip = "点击复制 iPhone 遥控连接地址"
                 remoteSubmenu.addItem(urlItem)
 
                 if let qrCode = remoteServerQRCode {
                     let qrItem = NSMenuItem(
-                        title: "Scan with iPhone Camera",
+                        title: "iPhone 相机扫码连接",
                         action: #selector(copyRemoteServerURL(_:)),
                         keyEquivalent: ""
                     )
                     qrItem.target = self
                     qrItem.image = qrCode
-                    qrItem.toolTip = "Scan to connect, or click to copy the URL"
+                    qrItem.toolTip = "扫码连接，或点击复制地址"
                     remoteSubmenu.addItem(qrItem)
                 }
             } else if let error = remoteServerError {
-                let errorItem = NSMenuItem(title: "Unavailable: \(error)", action: nil, keyEquivalent: "")
+                let errorItem = NSMenuItem(title: "不可用: \(error)", action: nil, keyEquivalent: "")
                 errorItem.isEnabled = false
                 remoteSubmenu.addItem(errorItem)
             } else {
-                let startingItem = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
+                let startingItem = NSMenuItem(title: "启动中…", action: nil, keyEquivalent: "")
                 startingItem.isEnabled = false
                 remoteSubmenu.addItem(startingItem)
             }
@@ -470,7 +511,7 @@ class MenuBarManager {
         menu.addItem(NSMenuItem.separator())
 
         // Quit
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
     }
@@ -504,7 +545,7 @@ class MenuBarManager {
     func updateConnectionStatus(connected: Bool) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.statusMenuItem.title = connected ? "Status: Connected ✓" : "Status: Disconnected"
+            self.statusMenuItem.title = connected ? "状态:已连接 ✓" : "状态:未连接"
             self.statusItem.button?.appearsDisabled = !connected
         }
     }
