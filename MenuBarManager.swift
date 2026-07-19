@@ -404,7 +404,8 @@ class MenuBarManager {
 
             for action in ButtonAction.allCases {
                 // Hold actions require press+release tracking; hide them on tap-only buttons.
-                if action.requiresHold && !canHold { continue }
+                // Backspace also works as a single tap, so it stays available everywhere.
+                if action.requiresHold && action != .backspace && !canHold { continue }
                 // Mouse Click is only meaningful for the trackpad click button.
                 if action == .trackpadClick && key != "select" { continue }
 

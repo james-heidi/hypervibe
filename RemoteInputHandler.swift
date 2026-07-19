@@ -246,7 +246,12 @@ class RemoteInputHandler {
     
     private func executeAction(_ action: ButtonAction, button: String, pressed: Bool) {
         if action.requiresHold {
-            handleHoldAction(action, button: button, pressed: pressed)
+            if holdCapableButtons.contains(button) {
+                handleHoldAction(action, button: button, pressed: pressed)
+            } else if action == .backspace, pressed {
+                // Press-only buttons (menu/tv/select) can't hold: fire a single tap instead.
+                sendKey(kVK_Delete)
+            }
             return
         }
         // Tap actions fire once, on press only.
@@ -280,7 +285,13 @@ class RemoteInputHandler {
     /// Route an authenticated iPhone action through the same key lifecycle as HID input.
     /// `sourceID` is server-generated and is never derived into a raw key code.
     func handleExternalAction(_ action: ButtonAction, sourceID: String, pressed: Bool) {
-        executeAction(action, button: sourceID, pressed: pressed)
+        // Web sourceIDs are not in holdCapableButtons; their down/up lifecycle is
+        // guaranteed by the server's heartbeat watchdog, so route holds directly.
+        if action.requiresHold {
+            handleHoldAction(action, button: sourceID, pressed: pressed)
+        } else {
+            executeAction(action, button: sourceID, pressed: pressed)
+        }
     }
 
     /// Release holds owned by one external connection without disturbing a physical remote hold.
