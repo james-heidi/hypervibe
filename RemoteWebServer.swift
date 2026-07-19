@@ -742,18 +742,7 @@ final class RemoteWebServer {
           box-shadow: 0 26px 58px #000b, inset 0 1px #fff, inset 0 -2px 4px #77746d55;
         }
         .deck { display: grid; gap: clamp(8px, 2.5vw, 12px); }
-        .system-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(6px, 2vw, 10px); }
-        .arrow-grid {
-          display: grid;
-          grid-template-areas: ". up ." "left down right";
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: clamp(6px, 2vw, 10px);
-        }
-        .arrow-grid .key { min-height: 58px; }
-        .arrow-up { grid-area: up; }
-        .arrow-left { grid-area: left; }
-        .arrow-down { grid-area: down; }
-        .arrow-right { grid-area: right; }
+        .system-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(6px, 2vw, 10px); }
         .bottom-row { display: grid; grid-template-columns: minmax(0, 1fr) clamp(62px, 18vw, 76px) clamp(62px, 18vw, 76px); gap: clamp(7px, 2vw, 10px); }
         button {
           appearance: none;
@@ -816,15 +805,7 @@ final class RemoteWebServer {
           <div class="deck">
             <div class="system-grid">
               <button class="key white-key" data-action="ctrlC" aria-label="Control C"><span class="glyph">ϟ</span><span class="key-label">Ctrl+C</span></button>
-              <button class="key white-key" data-action="esc" aria-label="Escape"><span class="glyph">×</span><span class="key-label">Esc</span></button>
               <button class="key white-key" data-action="mode_switch" aria-label="Switch Claude Code mode"><span class="glyph">↪</span><span class="key-label">Mode</span></button>
-            </div>
-
-            <div class="arrow-grid" role="group" aria-label="Arrow keys">
-              <button class="key white-key arrow-up" data-action="up" aria-label="Up arrow"><span class="glyph">↑</span></button>
-              <button class="key white-key arrow-left" data-action="left" aria-label="Left arrow"><span class="glyph">←</span></button>
-              <button class="key white-key arrow-down" data-action="down" aria-label="Down arrow"><span class="glyph">↓</span></button>
-              <button class="key white-key arrow-right" data-action="right" aria-label="Right arrow"><span class="glyph">→</span></button>
             </div>
 
             <div class="bottom-row">
