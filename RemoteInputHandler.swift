@@ -12,6 +12,13 @@ import Carbon.HIToolbox
 import AppKit
 
 class RemoteInputHandler {
+    private struct HeldKey {
+        let id: UUID
+        let keyCode: Int
+        let flags: CGEventFlags
+        let repeatTimer: DispatchSourceTimer
+    }
+
     private let cursorController: CursorController
     private weak var menuBarManager: MenuBarManager?
     private var devices: [IOHIDDevice] = []
@@ -35,7 +42,7 @@ class RemoteInputHandler {
     /// Virtual keys currently held down, keyed by the HID button that initiated the hold.
     /// Captured at press time so release can fire the correct keyUp even if the user
     /// rebinds the button mid-hold. Cleared on device removal to avoid stuck modifiers.
-    private var heldKeys: [String: (keyCode: Int, flags: CGEventFlags)] = [:]
+    private var heldKeys: [String: HeldKey] = [:]
 
     /// Last observed pressed/released state per button. The Siri Remote mirrors each logical
     /// button across multiple HID interfaces (6 seized here), so every physical press/release
@@ -257,7 +264,7 @@ class RemoteInputHandler {
         let matchingKeys = heldKeys.keys.filter { $0.hasPrefix(sourcePrefix) }
         for key in matchingKeys {
             guard let held = heldKeys.removeValue(forKey: key) else { continue }
-            postKey(keyCode: held.keyCode, flags: [], keyDown: false)
+            releaseHeldKey(held)
         }
     }
 
@@ -274,29 +281,68 @@ class RemoteInputHandler {
         if pressed {
             // Defensive: if a prior release was missed, close the stale hold before opening a new one.
             if let stale = heldKeys.removeValue(forKey: button) {
-                postKey(keyCode: stale.keyCode, flags: [], keyDown: false)
+                releaseHeldKey(stale)
             }
             postKey(keyCode: spec.keyCode, flags: spec.flags, keyDown: true)
-            heldKeys[button] = spec
+
+            let holdID = UUID()
+            let repeatTimer = DispatchSource.makeTimerSource(queue: .main)
+            repeatTimer.schedule(
+                deadline: .now() + .milliseconds(250),
+                repeating: .milliseconds(33),
+                leeway: .milliseconds(2)
+            )
+            repeatTimer.setEventHandler { [weak self] in
+                guard let self = self,
+                      let held = self.heldKeys[button],
+                      held.id == holdID else { return }
+                self.postKey(
+                    keyCode: held.keyCode,
+                    flags: held.flags,
+                    keyDown: true,
+                    autorepeat: true
+                )
+            }
+            heldKeys[button] = HeldKey(
+                id: holdID,
+                keyCode: spec.keyCode,
+                flags: spec.flags,
+                repeatTimer: repeatTimer
+            )
+            repeatTimer.resume()
         } else {
             guard let held = heldKeys.removeValue(forKey: button) else { return }
-            postKey(keyCode: held.keyCode, flags: [], keyDown: false)
+            releaseHeldKey(held)
         }
     }
 
     /// Called on device removal to avoid stuck modifiers if the remote disconnects mid-hold.
     func releaseAllHeldKeys() {
-        for (_, held) in heldKeys {
-            postKey(keyCode: held.keyCode, flags: [], keyDown: false)
-        }
+        let activeHolds = Array(heldKeys.values)
         heldKeys.removeAll()
+        for held in activeHolds {
+            releaseHeldKey(held)
+        }
         buttonState.removeAll()
     }
 
-    private func postKey(keyCode: Int, flags: CGEventFlags, keyDown: Bool) {
+    private func releaseHeldKey(_ held: HeldKey) {
+        held.repeatTimer.cancel()
+        postKey(keyCode: held.keyCode, flags: [], keyDown: false)
+    }
+
+    private func postKey(
+        keyCode: Int,
+        flags: CGEventFlags,
+        keyDown: Bool,
+        autorepeat: Bool = false
+    ) {
         let src = CGEventSource(stateID: .hidSystemState)
         let event = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(keyCode), keyDown: keyDown)
         event?.flags = flags
+        if autorepeat {
+            event?.setIntegerValueField(.keyboardEventAutorepeat, value: 1)
+        }
         event?.post(tap: .cghidEventTap)
     }
 
