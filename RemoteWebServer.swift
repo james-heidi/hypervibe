@@ -724,7 +724,7 @@ final class RemoteWebServer {
             radial-gradient(circle at 50% -15%, #292c31 0, #111317 40%, #08090b 76%),
             #090a0c;
         }
-        main { width: min(100%, 430px); margin: auto auto max(4px, env(safe-area-inset-bottom)); }
+        main { width: min(50vw, 250px); margin: auto max(4px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) auto; }
         #status { position: absolute; top: 12.5px; right: 12.5px; z-index: 2; width: 7px; height: 7px; border-radius: 50%; color: #f3b664; background: currentColor; box-shadow: 0 0 8px currentColor; }
         #status.ready { color: #73dc91; }
         .faceplate {
@@ -743,7 +743,7 @@ final class RemoteWebServer {
         }
         .deck { display: grid; gap: clamp(8px, 2.5vw, 12px); }
         .system-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(6px, 2vw, 10px); }
-        .bottom-row { display: grid; grid-template-columns: minmax(0, 1fr) clamp(62px, 18vw, 76px) clamp(62px, 18vw, 76px); gap: clamp(7px, 2vw, 10px); }
+        .bottom-row { display: grid; grid-template-columns: minmax(0, 1fr) clamp(42px, 12vw, 54px) clamp(42px, 12vw, 54px); gap: clamp(5px, 1.5vw, 8px); }
         button {
           appearance: none;
           min-width: 0;
