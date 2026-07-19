@@ -120,6 +120,12 @@ enum ScrollSpeed: String, CaseIterable {
 }
 
 class MenuBarManager {
+    private static let remoteTalkActionDefaultsKey = "remoteTalkAction"
+    private static let remoteTalkChoices: [(action: ButtonAction, title: String)] = [
+        (.spaceKey, "Space"),
+        (.rightCmd, "Right Command"),
+        (.rightOpt, "Right Option"),
+    ]
     
     private let statusItem: NSStatusItem
     private let menu: NSMenu
@@ -128,6 +134,7 @@ class MenuBarManager {
     private var remoteServerURL: String?
     private var remoteServerQRCode: NSImage?
     private var remoteServerError: String?
+    private var remoteTalkAction: ButtonAction = .spaceKey
     
     // Button mappings (stored in UserDefaults)
     private var buttonMappings: [String: ButtonAction] = [:]
@@ -158,7 +165,20 @@ class MenuBarManager {
         
         loadMappings()
         loadSwipeMappings()
+        loadRemoteTalkAction()
         setupMenuBar()
+    }
+
+    private func loadRemoteTalkAction() {
+        let defaults = UserDefaults.standard
+        if let rawValue = defaults.string(forKey: Self.remoteTalkActionDefaultsKey),
+           let action = ButtonAction(rawValue: rawValue),
+           Self.remoteTalkChoices.contains(where: { $0.action == action }) {
+            remoteTalkAction = action
+        } else {
+            remoteTalkAction = .spaceKey
+            defaults.set(remoteTalkAction.rawValue, forKey: Self.remoteTalkActionDefaultsKey)
+        }
     }
     
     private func loadMappings() {
@@ -379,6 +399,22 @@ class MenuBarManager {
         enabledItem.state = remoteServerEnabled ? .on : .off
         remoteSubmenu.addItem(enabledItem)
 
+        let talkKeyItem = NSMenuItem(title: "Push-to-Talk Key", action: nil, keyEquivalent: "")
+        let talkKeySubmenu = NSMenu()
+        for choice in Self.remoteTalkChoices {
+            let choiceItem = NSMenuItem(
+                title: choice.title,
+                action: #selector(changeRemoteTalkAction(_:)),
+                keyEquivalent: ""
+            )
+            choiceItem.target = self
+            choiceItem.representedObject = choice.action
+            choiceItem.state = remoteTalkAction == choice.action ? .on : .off
+            talkKeySubmenu.addItem(choiceItem)
+        }
+        talkKeyItem.submenu = talkKeySubmenu
+        remoteSubmenu.addItem(talkKeyItem)
+
         if remoteServerEnabled {
             if let url = remoteServerURL {
                 let urlItem = NSMenuItem(
@@ -438,6 +474,14 @@ class MenuBarManager {
         }
         swipeMappings[direction] = action
         saveSwipeMappings()
+        rebuildMenu()
+    }
+
+    @objc private func changeRemoteTalkAction(_ sender: NSMenuItem) {
+        guard let action = sender.representedObject as? ButtonAction,
+              Self.remoteTalkChoices.contains(where: { $0.action == action }) else { return }
+        remoteTalkAction = action
+        UserDefaults.standard.set(action.rawValue, forKey: Self.remoteTalkActionDefaultsKey)
         rebuildMenu()
     }
     
@@ -513,6 +557,10 @@ class MenuBarManager {
     
     func getMapping(for button: String) -> ButtonAction {
         return buttonMappings[button] ?? .none
+    }
+
+    func getRemoteTalkAction() -> ButtonAction {
+        remoteTalkAction
     }
     
     // Map HID codes to button names

@@ -54,12 +54,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         remoteInputHandler = inputHandler
 
         // Local iPhone PWA. Semantic IDs resolve only to fixed ButtonAction/SwipeAction
-        // allowlists; push-to-talk follows the existing Siri-button voice mapping.
+        // allowlists; the phone's push-to-talk key has its own live menu setting.
         let webServer = RemoteWebServer(
             inputHandler: inputHandler,
             actionResolver: { [weak self] actionID in
                 guard let menuBarManager = self?.menuBarManager else { return nil }
-                let pushToTalkAction = menuBarManager.getMapping(for: "siri")
+                let pushToTalkAction = menuBarManager.getRemoteTalkAction()
                 return ButtonAction.remoteAction(for: actionID, pushToTalkAction: pushToTalkAction)
             },
             commandHandler: { [weak menuBarManager] action in
