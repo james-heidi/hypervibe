@@ -737,12 +737,7 @@ final class RemoteWebServer {
           overflow: hidden;
           border: 1px solid #f8f5ed;
           border-radius: 32px;
-          background:
-            radial-gradient(circle at 16px 16px, #77746d 0 1.5px, #faf7ef 2px, transparent 3.5px),
-            radial-gradient(circle at calc(100% - 16px) 16px, #77746d 0 1.5px, #faf7ef 2px, transparent 3.5px),
-            radial-gradient(circle at 16px calc(100% - 16px), #77746d 0 1.5px, #faf7ef 2px, transparent 3.5px),
-            radial-gradient(circle at calc(100% - 16px) calc(100% - 16px), #77746d 0 1.5px, #faf7ef 2px, transparent 3.5px),
-            linear-gradient(145deg, #ece9e1, var(--plate) 48%, #c5c0b5);
+          background: linear-gradient(145deg, #ece9e1, var(--plate) 48%, #c5c0b5);
           box-shadow: 0 26px 58px #000b, inset 0 1px #fff, inset 0 -2px 4px #77746d55;
         }
         .deck { flex: 1; display: grid; grid-template-rows: 1fr 1fr 1fr 1.35fr; gap: clamp(8px, 2.5vw, 12px); }
