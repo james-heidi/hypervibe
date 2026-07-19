@@ -374,7 +374,7 @@ class MenuBarManager {
             ("ringDown", "环下"),
             ("ringLeft", "环左"),
             ("ringRight", "环右"),
-            ("menu", "菜单键"),
+            ("menu", "返回键 ‹"),
             ("tv", "TV 键"),
             ("siri", "Siri 键"),
             ("playPause", "播放/暂停"),
