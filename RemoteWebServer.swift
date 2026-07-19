@@ -708,25 +708,25 @@ final class RemoteWebServer {
         :root {
           color-scheme: dark;
           font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
-          --ink: #202225;
-          --plate: #d8d4ca;
+          --ink: #29261b;
+          --plate: #ede9df;
           --plate-light: #efede6;
           --plate-shadow: #8c887f;
-          --accent: #ff654f;
+          --accent: #d97757;
         }
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-        html, body { margin: 0; min-height: 100%; background: #090a0c; color: #f5f4ef; overscroll-behavior: none; }
+        html, body { margin: 0; min-height: 100%; background: #1f1e1c; color: #f5f4ef; overscroll-behavior: none; }
         body {
           min-height: 100dvh;
           padding: 0;
           display: flex;
           background:
-            radial-gradient(circle at 50% -15%, #292c31 0, #111317 40%, #08090b 76%),
-            #090a0c;
+            radial-gradient(circle at 50% -15%, #3a3835 0, #262624 45%, #1b1a18 80%),
+            #1f1e1c;
         }
         main { width: calc(50vw - 10px); height: calc(50dvh - 10px); margin: auto 10px max(10px, env(safe-area-inset-bottom)) auto; display: flex; }
-        #status { position: absolute; top: 7px; left: 50%; transform: translateX(-50%); z-index: 2; width: 34px; height: 4px; border-radius: 2px; color: #f3b664; background: currentColor; box-shadow: 0 0 10px currentColor, 0 0 3px currentColor; }
-        #status.ready { color: #73dc91; }
+        #status { position: absolute; top: 7px; left: 50%; transform: translateX(-50%); z-index: 2; width: 34px; height: 4px; border-radius: 2px; color: #a39e92; background: currentColor; box-shadow: 0 0 10px currentColor, 0 0 3px currentColor; }
+        #status.ready { color: #d97757; }
         .faceplate {
           position: relative;
           flex: 1;
@@ -738,7 +738,7 @@ final class RemoteWebServer {
           overflow: hidden;
           border: 1px solid #f8f5ed;
           border-radius: 32px;
-          background: linear-gradient(145deg, #ece9e1, var(--plate) 48%, #c5c0b5);
+          background: linear-gradient(145deg, #f7f4ec, var(--plate) 48%, #d6d1c4);
           box-shadow: 0 26px 58px #000b, inset 0 1px #fff, inset 0 -2px 4px #77746d55;
         }
         .deck { flex: 1; display: grid; grid-template-rows: 1fr 1.35fr 1fr; gap: clamp(8px, 2.5vw, 12px); }
@@ -778,19 +778,19 @@ final class RemoteWebServer {
         #talk {
           min-height: 58px;
           color: #f7f5ef;
-          border: 1px solid #35373b;
-          background: linear-gradient(145deg, #2a2c30, #111215);
+          border: 1px solid #3b3936;
+          background: linear-gradient(145deg, #34322e, #1d1c1a);
           box-shadow: 7px 8px 13px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ffffff30, inset -2px -2px 3px #000c;
         }
         #talk .key-label { color: #b9bcc2; }
-        #talk.active { transform: translateY(4px) scale(.99); color: #fff; background: linear-gradient(145deg, #e34d42, #9f251f); box-shadow: 1px 2px 4px #77736c88, inset 3px 4px 8px #6e1614aa, inset -1px -1px 3px #ffb0a6; }
+        #talk.active { transform: translateY(4px) scale(.99); color: #fff; background: linear-gradient(145deg, #d97757, #a84b2f); box-shadow: 1px 2px 4px #77736c88, inset 3px 4px 8px #6e1614aa, inset -1px -1px 3px #ffb0a6; }
         #talk.active .key-label { color: #fff; }
         .mic-icon { width: 28px; height: 28px; }
-        .enter { color: #16351f; background: linear-gradient(145deg, #b1eec3, #5fce84); box-shadow: 6px 7px 12px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ddffe6, inset -2px -2px 3px #2f7d4a77; }
+        .enter { color: #fff7f2; background: linear-gradient(145deg, #e18a68, #c96442); box-shadow: 6px 7px 12px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #f4c4ad, inset -2px -2px 3px #8f3d2377; }
         .enter .glyph { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: clamp(19px, 5.5vw, 24px); font-weight: 560; }
-        .enter .key-label { color: #1c5731; }
-        .ctrlc { color: #4a1512; background: linear-gradient(145deg, #ffa294, #e35b4f); box-shadow: 6px 7px 12px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ffd0c7, inset -2px -2px 3px #96271e77; }
-        .ctrlc .key-label { color: #6a1f18; }
+        .enter .key-label { color: #ffe8dc; }
+        .ctrlc { color: #3d3a30; background: linear-gradient(145deg, #fffdf8, #eae5d9); box-shadow: 6px 7px 12px #77736c99, -4px -4px 9px #fff, inset 1px 1px 1px #fff, inset -1px -2px 2px #b5b0a4; }
+        .ctrlc .key-label { color: #6b675c; }
         @media (max-width: 350px) {
           .faceplate { border-radius: 27px; }
           .deck { gap: 7px; }
