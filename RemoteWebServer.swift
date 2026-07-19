@@ -725,7 +725,7 @@ final class RemoteWebServer {
             #090a0c;
         }
         main { width: calc(50vw - 10px); height: calc(50dvh - 10px); margin: auto 10px max(10px, env(safe-area-inset-bottom)) auto; display: flex; }
-        #status { position: absolute; top: 11px; right: 16px; z-index: 2; width: 30px; height: 4px; border-radius: 2px; color: #f3b664; background: currentColor; box-shadow: 0 0 10px currentColor, 0 0 3px currentColor; }
+        #status { position: absolute; top: 7px; left: 50%; transform: translateX(-50%); z-index: 2; width: 34px; height: 4px; border-radius: 2px; color: #f3b664; background: currentColor; box-shadow: 0 0 10px currentColor, 0 0 3px currentColor; }
         #status.ready { color: #73dc91; }
         .faceplate {
           position: relative;
