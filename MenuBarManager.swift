@@ -22,6 +22,7 @@ enum ButtonAction: String, CaseIterable {
     case spaceKey = "Space: Claude Voice Dictation"
     case rightCmd = "Right Command: 3rd-party Voice Dictation"
     case rightOpt = "Right Option: 3rd-party Voice Dictation"
+    case f13Key = "F13: Custom Dictation Key"
     case trackpadClick = "Mouse Click"
     case none = "None"
 
@@ -30,7 +31,7 @@ enum ButtonAction: String, CaseIterable {
     /// offered only for hold-capable buttons.
     var requiresHold: Bool {
         switch self {
-        case .backspace, .spaceKey, .rightCmd, .rightOpt: return true
+        case .backspace, .spaceKey, .rightCmd, .rightOpt, .f13Key: return true
         default: return false
         }
     }
@@ -125,6 +126,7 @@ class MenuBarManager {
         (.spaceKey, "Space"),
         (.rightCmd, "Right Command"),
         (.rightOpt, "Right Option"),
+        (.f13Key, "F13"),
     ]
     
     private let statusItem: NSStatusItem
@@ -689,6 +691,8 @@ class MenuBarManager {
             sendModifierTap(kVK_RightCommand, flag: .maskCommand)
         case .rightOpt:
             sendModifierTap(kVK_RightOption, flag: .maskAlternate)
+        case .f13Key:
+            sendKey(kVK_F13)
         case .trackpadClick:
             performClick()
         }

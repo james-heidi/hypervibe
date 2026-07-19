@@ -246,7 +246,7 @@ class RemoteInputHandler {
             sendKey(kVK_Escape)
         case .ctrlC:
             sendKey(kVK_ANSI_C, flags: .maskControl)
-        case .backspace, .spaceKey, .rightCmd, .rightOpt:
+        case .backspace, .spaceKey, .rightCmd, .rightOpt, .f13Key:
             break // handled by handleHoldAction
         case .trackpadClick:
             cursorController.performClick()
@@ -276,6 +276,7 @@ class RemoteInputHandler {
         case .spaceKey: spec = (kVK_Space,        [])
         case .rightCmd: spec = (kVK_RightCommand, .maskCommand)
         case .rightOpt: spec = (kVK_RightOption,  .maskAlternate)
+        case .f13Key:   spec = (kVK_F13,          [])
         default: return
         }
 
