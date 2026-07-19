@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: ver
+        run: |
+          latest=$(git tag --list 'v*' | sort -V | tail -1)
+          latest=${latest:-v0.2.0}
+          base=${latest#v}
+          major=$(echo "$base" | cut -d. -f1)
+          minor=$(echo "$base" | cut -d. -f2)
+          patch=$(echo "$base" | cut -d. -f3)
+          next="${major}.${minor}.$((patch + 1))"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "Next version: v$next"
+
+      - name: Build
+        run: ./build.sh
+
+      - name: Bundle (ad-hoc signed on CI)
+        run: ./create_app_bundle.sh
+
+      - name: Package DMG
+        run: ./make_dmg.sh "${{ steps.ver.outputs.version }}"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          gh release create "v$v" "HyperVibe-$v.dmg" \
+            --title "HyperVibe v$v" \
+            --target "$GITHUB_SHA" \
+            --generate-notes \
+            --notes "Not notarized: first launch requires right-click → Open, or \`xattr -d com.apple.quarantine /Applications/HyperVibe.app\`. Grant Accessibility + Input Monitoring in System Settings."
