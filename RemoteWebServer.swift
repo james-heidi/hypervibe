@@ -43,6 +43,7 @@ final class RemoteWebServer {
 
     private weak var inputHandler: RemoteInputHandler?
     private let actionResolver: (String) -> ButtonAction?
+    private let commandHandler: (SwipeAction) -> Void
     private let queue = DispatchQueue(label: "com.hypervibe.remote-web-server")
     private let pathMonitor = NWPathMonitor()
     private let token: String
@@ -60,9 +61,14 @@ final class RemoteWebServer {
 
     var onStatusChange: ((Status) -> Void)?
 
-    init(inputHandler: RemoteInputHandler, actionResolver: @escaping (String) -> ButtonAction?) {
+    init(
+        inputHandler: RemoteInputHandler,
+        actionResolver: @escaping (String) -> ButtonAction?,
+        commandHandler: @escaping (SwipeAction) -> Void
+    ) {
         self.inputHandler = inputHandler
         self.actionResolver = actionResolver
+        self.commandHandler = commandHandler
 
         let defaults = UserDefaults.standard
         if let existing = defaults.string(forKey: Self.tokenDefaultsKey), !existing.isEmpty {
@@ -450,15 +456,24 @@ final class RemoteWebServer {
 
         switch type {
         case "tap":
-            guard let actionID = message["actionID"] as? String,
-                  let action = resolveAction(actionID),
-                  !action.requiresHold else {
+            guard let actionID = message["actionID"] as? String else {
                 sendError("Unknown tap action", to: client.connection)
                 return
             }
-            let sourceID = "\(client.sourcePrefix)tap:\(UUID().uuidString)"
-            performInput { input in
-                input.handleExternalAction(action, sourceID: sourceID, pressed: true)
+
+            if let action = resolveAction(actionID) {
+                guard !action.requiresHold else {
+                    sendError("Unknown tap action", to: client.connection)
+                    return
+                }
+                let sourceID = "\(client.sourcePrefix)tap:\(UUID().uuidString)"
+                performInput { input in
+                    input.handleExternalAction(action, sourceID: sourceID, pressed: true)
+                }
+            } else if let command = SwipeAction.remoteAction(for: actionID) {
+                performCommand(command)
+            } else {
+                sendError("Unknown tap action", to: client.connection)
             }
 
         case "down":
@@ -504,6 +519,12 @@ final class RemoteWebServer {
         // Existing mappings are owned by the main-thread menu manager.
         DispatchQueue.main.sync {
             actionResolver(actionID)
+        }
+    }
+
+    private func performCommand(_ action: SwipeAction) {
+        DispatchQueue.main.async { [weak self] in
+            self?.commandHandler(action)
         }
     }
 
@@ -684,44 +705,186 @@ final class RemoteWebServer {
       <link rel="apple-touch-icon" href="/icon.svg?token=__TOKEN__">
       <title>HyperVibe Remote</title>
       <style>
-        :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif; }
+        :root {
+          color-scheme: dark;
+          font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+          --ink: #202225;
+          --plate: #d8d4ca;
+          --plate-light: #efede6;
+          --plate-shadow: #8c887f;
+          --accent: #ff654f;
+        }
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-        html, body { margin: 0; min-height: 100%; background: #090b10; color: #f3f5fa; overscroll-behavior: none; }
-        body { min-height: 100dvh; padding: max(18px, env(safe-area-inset-top)) 18px max(20px, env(safe-area-inset-bottom)); display: flex; }
-        main { width: min(100%, 520px); margin: auto; }
-        header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
-        h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
-        #status { font-size: 13px; color: #ffb35c; }
-        #status.ready { color: #64d68a; }
-        .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-        button { appearance: none; border: 1px solid #2d3340; background: linear-gradient(180deg, #20242d, #15181f); color: #f5f7fb; min-height: 78px; border-radius: 18px; font: 650 18px/1 -apple-system, BlinkMacSystemFont, sans-serif; box-shadow: 0 8px 22px #0007, inset 0 1px #ffffff0d; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-        button:active, button.active { transform: scale(.97); background: #292f3b; border-color: #515c70; }
-        .danger { color: #ff938d; }
-        #talk { grid-column: 1 / -1; min-height: 132px; margin-top: 4px; border-color: #35604a; background: linear-gradient(180deg, #183b2a, #10271d); color: #8ff0b4; font-size: 22px; }
-        #talk.active { background: #8b2534; border-color: #f06f7d; color: white; box-shadow: 0 0 0 5px #e24b6426, 0 10px 28px #0008; }
-        .hint { margin: 15px 4px 0; text-align: center; color: #7f8796; font-size: 12px; }
+        html, body { margin: 0; min-height: 100%; background: #090a0c; color: #f5f4ef; overscroll-behavior: none; }
+        body {
+          min-height: 100dvh;
+          padding: max(15px, env(safe-area-inset-top)) 10px max(16px, env(safe-area-inset-bottom));
+          display: flex;
+          background:
+            radial-gradient(circle at 50% -15%, #292c31 0, #111317 40%, #08090b 76%),
+            #090a0c;
+        }
+        main { width: min(100%, 430px); margin: auto; }
+        header { display: flex; align-items: end; justify-content: space-between; margin: 0 7px 12px; }
+        .eyebrow { display: block; color: #8f949d; font: 750 9px/1.2 ui-monospace, SFMono-Regular, monospace; letter-spacing: .19em; }
+        h1 { margin: 4px 0 0; font-size: 20px; line-height: 1; letter-spacing: -.035em; }
+        #status { padding-bottom: 1px; color: #f3b664; font: 650 11px/1 ui-monospace, SFMono-Regular, monospace; }
+        #status::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+        #status.ready { color: #73dc91; }
+        .faceplate {
+          position: relative;
+          padding: clamp(13px, 4vw, 19px);
+          overflow: hidden;
+          border: 1px solid #f8f5ed;
+          border-radius: 32px;
+          background:
+            radial-gradient(circle at 16px 16px, #77746d 0 1.5px, #faf7ef 2px, transparent 3.5px),
+            radial-gradient(circle at calc(100% - 16px) 16px, #77746d 0 1.5px, #faf7ef 2px, transparent 3.5px),
+            radial-gradient(circle at 16px calc(100% - 16px), #77746d 0 1.5px, #faf7ef 2px, transparent 3.5px),
+            radial-gradient(circle at calc(100% - 16px) calc(100% - 16px), #77746d 0 1.5px, #faf7ef 2px, transparent 3.5px),
+            linear-gradient(145deg, #ece9e1, var(--plate) 48%, #c5c0b5);
+          box-shadow: 0 26px 58px #000b, inset 0 1px #fff, inset 0 -2px 4px #77746d55;
+        }
+        .deck { display: grid; gap: clamp(8px, 2.5vw, 12px); }
+        .top-row { display: grid; grid-template-columns: minmax(0, 1fr) clamp(122px, 36vw, 148px); gap: clamp(8px, 2.5vw, 12px); }
+        .top-macros { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(6px, 1.8vw, 9px); }
+        .macro-grid, .system-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(6px, 2vw, 10px); }
+        .bottom-row { display: grid; grid-template-columns: minmax(0, 1fr) clamp(70px, 20vw, 82px); gap: clamp(8px, 2.5vw, 12px); }
+        button {
+          appearance: none;
+          min-width: 0;
+          border: 0;
+          font-family: inherit;
+          touch-action: none;
+          user-select: none;
+          -webkit-user-select: none;
+          -webkit-touch-callout: none;
+          transition: transform 55ms ease, box-shadow 55ms ease, background 80ms ease;
+        }
+        .key {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          min-height: 72px;
+          padding: 9px 4px 8px;
+          border-radius: 15px;
+          color: var(--ink);
+        }
+        .glyph { font: 720 clamp(17px, 5vw, 24px)/1 ui-monospace, SFMono-Regular, monospace; letter-spacing: -.06em; }
+        .key-label { max-width: 100%; overflow: hidden; color: #55575a; font: 700 clamp(7px, 2.2vw, 9px)/1.05 ui-monospace, SFMono-Regular, monospace; letter-spacing: .01em; text-overflow: ellipsis; white-space: nowrap; }
+        .macro {
+          border: 1px solid #ffffff88;
+          background: linear-gradient(145deg, #ffffff70, #a9a69e4d);
+          box-shadow: 6px 7px 12px #77736c88, -4px -4px 9px #ffffffa8, inset 1px 1px 1px #fff9, inset -1px -1px 2px #6d696250;
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+        }
+        .top-macros .key { min-height: 100%; padding-inline: 2px; }
+        .top-macros .glyph { font-size: clamp(14px, 4vw, 20px); }
+        .white-key {
+          background: linear-gradient(145deg, #fff, #e8e6e0);
+          box-shadow: 6px 7px 12px #77736c99, -4px -4px 9px #fff, inset 1px 1px 1px #fff, inset -1px -2px 2px #aca8a0;
+        }
+        .white-key .glyph { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: clamp(23px, 7vw, 31px); font-weight: 540; }
+        .key:active, .key.active {
+          transform: translateY(4px) scale(.985);
+          box-shadow: 1px 2px 4px #77736c88, inset 3px 3px 7px #8e8a825c, inset -1px -1px 3px #fff8;
+        }
+        .dpad {
+          position: relative;
+          aspect-ratio: 1;
+          border-radius: 50%;
+          background: radial-gradient(circle at 38% 30%, #31343a, #111216 62%, #050607 100%);
+          box-shadow: 8px 10px 15px #77736c99, -5px -5px 10px #fff, inset 2px 2px 5px #ffffff24, inset -4px -5px 8px #000b;
+        }
+        .dpad-key { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 0; border-radius: 18px; background: transparent; color: #d8dadd; }
+        .dpad-key .glyph { font: 650 17px/1 -apple-system, BlinkMacSystemFont, sans-serif; }
+        .dpad-key .key-label { color: #888d95; font-size: 6px; text-transform: uppercase; }
+        .dpad-key:active { transform: scale(.9); background: #ffffff12; color: #fff; }
+        .dpad-up { top: 4%; left: 24%; width: 52%; height: 36%; }
+        .dpad-down { bottom: 4%; left: 24%; width: 52%; height: 36%; }
+        .dpad-left { top: 24%; left: 4%; width: 36%; height: 52%; }
+        .dpad-right { top: 24%; right: 4%; width: 36%; height: 52%; }
+        .dpad-center { position: absolute; inset: 39%; pointer-events: none; border-radius: 50%; background: #0a0b0d; box-shadow: inset 1px 1px 3px #ffffff1c, 0 1px 2px #000; }
+        #talk {
+          min-height: 84px;
+          color: #f7f5ef;
+          border: 1px solid #35373b;
+          background: linear-gradient(145deg, #2a2c30, #111215);
+          box-shadow: 7px 8px 13px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ffffff30, inset -2px -2px 3px #000c;
+        }
+        #talk .key-label { color: #b9bcc2; }
+        #talk.active { transform: translateY(4px) scale(.99); color: #fff; background: linear-gradient(145deg, #e34d42, #9f251f); box-shadow: 1px 2px 4px #77736c88, inset 3px 4px 8px #6e1614aa, inset -1px -1px 3px #ffb0a6; }
+        #talk.active .key-label { color: #fff; }
+        .mic-icon { position: relative; width: 16px; height: 25px; border: 2px solid currentColor; border-radius: 9px; }
+        .mic-icon::before { content: ""; position: absolute; left: -7px; top: 10px; width: 26px; height: 18px; border: 2px solid currentColor; border-top: 0; border-radius: 0 0 15px 15px; }
+        .mic-icon::after { content: ""; position: absolute; left: 6px; top: 27px; width: 2px; height: 6px; background: currentColor; box-shadow: -5px 6px 0 -0.5px currentColor, 5px 6px 0 -0.5px currentColor; }
+        .ultra { min-height: 84px; color: #222; background: linear-gradient(145deg, #ff7765, var(--accent)); box-shadow: 7px 8px 13px #77736c99, -4px -4px 9px #fff, inset 1px 1px 2px #ffc3ba, inset -2px -2px 3px #a8271f88; }
+        .ultra .key-label { color: #5b1b17; font-size: 7px; }
+        .hint { margin: 11px 8px 0; text-align: center; color: #777d87; font: 500 10px/1.35 ui-monospace, SFMono-Regular, monospace; }
+        @media (max-width: 350px) {
+          .faceplate { border-radius: 27px; }
+          .deck { gap: 7px; }
+          .top-row { grid-template-columns: minmax(0, 1fr) 116px; gap: 7px; }
+          .top-macros, .macro-grid, .system-grid { gap: 5px; }
+          .key { min-height: 66px; border-radius: 13px; gap: 5px; }
+          #talk, .ultra { min-height: 76px; }
+        }
       </style>
     </head>
     <body>
       <main>
-        <header><h1>HyperVibe</h1><span id="status">Connecting…</span></header>
-        <section class="grid" aria-label="Mac keyboard remote">
-          <button data-action="esc">Esc</button>
-          <button data-action="up" aria-label="Up arrow">↑</button>
-          <button data-action="enter">Enter</button>
-          <button data-action="left" aria-label="Left arrow">←</button>
-          <button data-action="down" aria-label="Down arrow">↓</button>
-          <button data-action="right" aria-label="Right arrow">→</button>
-          <button class="danger" data-action="ctrlC">Ctrl C</button>
-          <button id="talk">Hold to Talk</button>
+        <header>
+          <div><span class="eyebrow">HYPERVIBE</span><h1>Command Pad</h1></div>
+          <span id="status">Connecting…</span>
+        </header>
+        <section class="faceplate" aria-label="Mac keyboard remote">
+          <div class="deck">
+            <div class="top-row">
+              <div class="top-macros">
+                <button class="key macro" data-action="cmd_model" aria-label="Type slash model"><span class="glyph">/M</span><span class="key-label">/model</span></button>
+                <button class="key macro" data-action="cmd_compact" aria-label="Type slash compact"><span class="glyph">/C</span><span class="key-label">/compact</span></button>
+                <button class="key macro" data-action="cmd_usage" aria-label="Type slash usage"><span class="glyph">%</span><span class="key-label">/usage</span></button>
+              </div>
+              <div class="dpad" role="group" aria-label="Arrow keys">
+                <button class="dpad-key dpad-up" data-action="up" aria-label="Up arrow"><span class="glyph">▲</span><span class="key-label">Up</span></button>
+                <button class="dpad-key dpad-down" data-action="down" aria-label="Down arrow"><span class="glyph">▼</span><span class="key-label">Down</span></button>
+                <button class="dpad-key dpad-left" data-action="left" aria-label="Left arrow"><span class="glyph">◀</span><span class="key-label">Left</span></button>
+                <button class="dpad-key dpad-right" data-action="right" aria-label="Right arrow"><span class="glyph">▶</span><span class="key-label">Right</span></button>
+                <span class="dpad-center" aria-hidden="true"></span>
+              </div>
+            </div>
+
+            <div class="macro-grid">
+              <button class="key macro" data-action="cmd_context" aria-label="Type slash context"><span class="glyph">{ }</span><span class="key-label">/context</span></button>
+              <button class="key macro" data-action="cmd_effort" aria-label="Type slash effort"><span class="glyph">◐</span><span class="key-label">/effort</span></button>
+              <button class="key macro" data-action="cmd_tasks" aria-label="Type slash tasks"><span class="glyph">☷</span><span class="key-label">/tasks</span></button>
+              <button class="key macro" data-action="cmd_init" aria-label="Type slash init"><span class="glyph">I/O</span><span class="key-label">/init</span></button>
+            </div>
+
+            <div class="system-grid">
+              <button class="key white-key" data-action="ctrlC" aria-label="Control C"><span class="glyph">ϟ</span><span class="key-label">Ctrl+C</span></button>
+              <button class="key white-key" data-action="enter" aria-label="Enter"><span class="glyph">✓</span><span class="key-label">Enter</span></button>
+              <button class="key white-key" data-action="esc" aria-label="Escape"><span class="glyph">×</span><span class="key-label">Esc</span></button>
+              <button class="key white-key" data-action="mode_switch" aria-label="Switch Claude Code mode"><span class="glyph">↪</span><span class="key-label">Mode</span></button>
+            </div>
+
+            <div class="bottom-row">
+              <button class="key" id="talk" aria-label="Hold to talk"><span class="mic-icon" aria-hidden="true"></span><span class="key-label" id="talk-label">Hold to Talk</span></button>
+              <button class="key ultra" data-action="kw_ultrathink" aria-label="Type ultrathink"><span class="glyph">∞</span><span class="key-label">ultrathink</span></button>
+            </div>
+          </div>
         </section>
-        <p class="hint">Keep this page open while using push-to-talk.</p>
+        <p class="hint">Commands are typed without Enter · keep open for push-to-talk</p>
       </main>
       <script>
         (() => {
           const token = new URLSearchParams(location.search).get('token') || '';
           const status = document.getElementById('status');
           const talk = document.getElementById('talk');
+          const talkLabel = document.getElementById('talk-label');
           let socket = null;
           let reconnectTimer = null;
           let activePressID = null;
@@ -745,7 +908,7 @@ final class RemoteWebServer {
             clearInterval(heartbeatTimer);
             heartbeatTimer = null;
             talk.classList.remove('active');
-            talk.textContent = 'Hold to Talk';
+            talkLabel.textContent = 'Hold to Talk';
             if (notifyServer) send({ type: 'up', pressID });
           };
 
@@ -783,7 +946,7 @@ final class RemoteWebServer {
             talk.setPointerCapture?.(event.pointerId);
             activePressID = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
             talk.classList.add('active');
-            talk.textContent = 'Talking…';
+            talkLabel.textContent = 'Listening…';
             send({ type: 'down', actionID: 'talk', pressID: activePressID });
             heartbeatTimer = setInterval(() => {
               if (activePressID) send({ type: 'heartbeat', pressID: activePressID });

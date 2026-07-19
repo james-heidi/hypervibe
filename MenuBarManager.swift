@@ -83,6 +83,23 @@ enum SwipeAction: String, CaseIterable {
     case tasks         = "/tasks"
     case usage         = "/usage"
     case none          = "None"
+
+    /// Fixed semantic allowlist for tap actions from the iPhone remote.
+    /// The phone never supplies text, key codes, or shortcut flags.
+    static func remoteAction(for actionID: String) -> SwipeAction? {
+        switch actionID {
+        case "cmd_model": return .model
+        case "cmd_compact": return .compact
+        case "cmd_usage": return .usage
+        case "cmd_context": return .context
+        case "cmd_effort": return .effort
+        case "cmd_tasks": return .tasks
+        case "cmd_init": return .`init`
+        case "kw_ultrathink": return .ultrathink
+        case "mode_switch": return .modeSwitch
+        default: return nil
+        }
+    }
 }
 
 // Scroll speed options
@@ -550,6 +567,11 @@ class MenuBarManager {
     /// (no Enter — user presses Enter themselves). Arrow/modifier actions send key events.
     func executeSwipe(_ direction: SwipeDirection) {
         let action = swipeMappings[direction] ?? SwipeAction.none
+        executeSwipeAction(action)
+    }
+
+    /// Shared execution path for configured swipes and allowlisted iPhone macro keys.
+    func executeSwipeAction(_ action: SwipeAction) {
         switch action {
         case .none:
             break

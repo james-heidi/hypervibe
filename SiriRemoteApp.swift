@@ -53,13 +53,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         remoteInputHandler = inputHandler
 
-        // Local iPhone PWA. The action resolver returns only ButtonAction allowlist entries;
-        // push-to-talk follows the existing Siri-button voice mapping.
-        let webServer = RemoteWebServer(inputHandler: inputHandler) { [weak self] actionID in
-            guard let menuBarManager = self?.menuBarManager else { return nil }
-            let pushToTalkAction = menuBarManager.getMapping(for: "siri")
-            return ButtonAction.remoteAction(for: actionID, pushToTalkAction: pushToTalkAction)
-        }
+        // Local iPhone PWA. Semantic IDs resolve only to fixed ButtonAction/SwipeAction
+        // allowlists; push-to-talk follows the existing Siri-button voice mapping.
+        let webServer = RemoteWebServer(
+            inputHandler: inputHandler,
+            actionResolver: { [weak self] actionID in
+                guard let menuBarManager = self?.menuBarManager else { return nil }
+                let pushToTalkAction = menuBarManager.getMapping(for: "siri")
+                return ButtonAction.remoteAction(for: actionID, pushToTalkAction: pushToTalkAction)
+            },
+            commandHandler: { [weak menuBarManager] action in
+                menuBarManager?.executeSwipeAction(action)
+            }
+        )
         remoteWebServer = webServer
         menuBarManager.onRemoteServerToggle = { [weak webServer] enabled in
             webServer?.setEnabled(enabled)
