@@ -56,7 +56,10 @@ enum ButtonAction: String, CaseIterable {
 
 /// HID buttons whose driver emits both press (value=1) and release (value=0) — verified via /tmp/hypervibe.log.
 /// menu/tv/select are excluded: menu/tv are press-only on the Siri Remote, select is handled separately for click/drag.
-let holdCapableButtons: Set<String> = ["playPause", "volumeUp", "volumeDown", "siri"]
+let holdCapableButtons: Set<String> = [
+    "playPause", "volumeUp", "volumeDown", "siri",
+    "ringUp", "ringDown", "ringLeft", "ringRight", "mute",
+]
 
 /// Trackpad swipe directions (single-finger flicks). Detection happens in TouchHandler;
 /// execution is dispatched here so mappings live alongside button mappings.
@@ -189,8 +192,13 @@ class MenuBarManager {
             "playPause": .enterKey,
             "menu": .escKey,
             "select": .trackpadClick,
+            "ringUp": .upKey,
+            "ringDown": .downKey,
+            "ringLeft": .leftKey,
+            "ringRight": .rightKey,
             "volumeUp": .upKey,
             "volumeDown": .downKey,
+            "mute": .none,
             "siri": .spaceKey,
             "tv": .ctrlC
         ]
@@ -198,7 +206,8 @@ class MenuBarManager {
         // Schema version bumps:
         //   v3: old media-key actions removed — drop all saved button mappings
         //   v4: "select" default changed from .enterKey to .trackpadClick — reset just that entry
-        let currentSchema = 4
+        //   v5: A2854 click-ring and Mute defaults added via the missing-key merge below
+        let currentSchema = 5
         let savedSchema = UserDefaults.standard.integer(forKey: "buttonMappingsSchema")
         if savedSchema < 3 {
             UserDefaults.standard.removeObject(forKey: "buttonMappings")
@@ -320,12 +329,17 @@ class MenuBarManager {
         
         let buttons = [
             ("select", "Trackpad Click"),
+            ("ringUp", "Ring Up"),
+            ("ringDown", "Ring Down"),
+            ("ringLeft", "Ring Left"),
+            ("ringRight", "Ring Right"),
             ("menu", "Menu Button"),
             ("tv", "TV Button"),
             ("siri", "Siri Button"),
             ("playPause", "Play/Pause Button"),
             ("volumeUp", "Volume Up"),
             ("volumeDown", "Volume Down"),
+            ("mute", "Mute"),
         ]
         
         for (key, label) in buttons {

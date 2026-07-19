@@ -192,7 +192,12 @@ class RemoteInputHandler {
         case (0x0C, 0x60): return "tv"            // TV button (actual)
         case (0x0C, 0x80): return "select"        // Selection
         case (0x0C, 0x41): return "select"        // Menu Select (alternative)
+        case (0x0C, 0x42): return "ringUp"        // Click-ring Up
+        case (0x0C, 0x43): return "ringDown"      // Click-ring Down
+        case (0x0C, 0x44): return "ringLeft"      // Click-ring Left
+        case (0x0C, 0x45): return "ringRight"     // Click-ring Right
         case (0x0C, 0xCD): return "playPause"     // Play/Pause
+        case (0x0C, 0xE2): return "mute"          // Mute
         case (0x0C, 0xE9): return "volumeUp"      // Volume Increment
         case (0x0C, 0xEA): return "volumeDown"    // Volume Decrement
         case (0x0C, 0xB5): return "nextTrack"     // Scan Next Track
