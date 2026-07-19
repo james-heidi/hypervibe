@@ -718,17 +718,21 @@ final class RemoteWebServer {
         html, body { margin: 0; min-height: 100%; background: #090a0c; color: #f5f4ef; overscroll-behavior: none; }
         body {
           min-height: 100dvh;
-          padding: max(15px, env(safe-area-inset-top)) 10px 6px;
+          padding: 0;
           display: flex;
           background:
             radial-gradient(circle at 50% -15%, #292c31 0, #111317 40%, #08090b 76%),
             #090a0c;
         }
-        main { width: min(50vw, 250px); margin: auto max(4px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) auto; }
+        main { width: 50vw; height: 50dvh; margin: auto 0 0 auto; display: flex; }
         #status { position: absolute; top: 12.5px; right: 12.5px; z-index: 2; width: 7px; height: 7px; border-radius: 50%; color: #f3b664; background: currentColor; box-shadow: 0 0 8px currentColor; }
         #status.ready { color: #73dc91; }
         .faceplate {
           position: relative;
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          padding-bottom: max(clamp(10px, 3vw, 14px), env(safe-area-inset-bottom));
           padding: clamp(10px, 3vw, 14px);
           overflow: hidden;
           border: 1px solid #f8f5ed;
@@ -741,7 +745,7 @@ final class RemoteWebServer {
             linear-gradient(145deg, #ece9e1, var(--plate) 48%, #c5c0b5);
           box-shadow: 0 26px 58px #000b, inset 0 1px #fff, inset 0 -2px 4px #77746d55;
         }
-        .deck { display: grid; gap: clamp(8px, 2.5vw, 12px); }
+        .deck { flex: 1; display: grid; grid-template-rows: 1fr 1.3fr; gap: clamp(8px, 2.5vw, 12px); }
         .system-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(6px, 2vw, 10px); }
         .bottom-row { display: grid; grid-template-columns: minmax(0, 1fr) clamp(42px, 12vw, 54px) clamp(42px, 12vw, 54px); gap: clamp(5px, 1.5vw, 8px); }
         button {
