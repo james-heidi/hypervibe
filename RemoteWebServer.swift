@@ -718,13 +718,13 @@ final class RemoteWebServer {
         html, body { margin: 0; min-height: 100%; background: #090a0c; color: #f5f4ef; overscroll-behavior: none; }
         body {
           min-height: 100dvh;
-          padding: max(15px, env(safe-area-inset-top)) 10px max(16px, env(safe-area-inset-bottom));
+          padding: max(15px, env(safe-area-inset-top)) 10px 6px;
           display: flex;
           background:
             radial-gradient(circle at 50% -15%, #292c31 0, #111317 40%, #08090b 76%),
             #090a0c;
         }
-        main { width: min(100%, 430px); margin: auto; }
+        main { width: min(100%, 430px); margin: auto auto max(4px, env(safe-area-inset-bottom)); }
         #status { position: absolute; top: 12.5px; right: 12.5px; z-index: 2; width: 7px; height: 7px; border-radius: 50%; color: #f3b664; background: currentColor; box-shadow: 0 0 8px currentColor; }
         #status.ready { color: #73dc91; }
         .faceplate {
