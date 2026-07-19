@@ -745,9 +745,7 @@ final class RemoteWebServer {
             linear-gradient(145deg, #ece9e1, var(--plate) 48%, #c5c0b5);
           box-shadow: 0 26px 58px #000b, inset 0 1px #fff, inset 0 -2px 4px #77746d55;
         }
-        .deck { flex: 1; display: grid; grid-template-rows: 1fr 1.3fr; gap: clamp(8px, 2.5vw, 12px); }
-        .system-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(6px, 2vw, 10px); }
-        .bottom-row { display: grid; grid-template-columns: minmax(0, 1fr) clamp(42px, 12vw, 54px) clamp(42px, 12vw, 54px); gap: clamp(5px, 1.5vw, 8px); }
+        .deck { flex: 1; display: grid; grid-template-rows: 1fr 1fr 1fr 1.35fr; gap: clamp(8px, 2.5vw, 12px); }
         button {
           appearance: none;
           min-width: 0;
@@ -796,7 +794,6 @@ final class RemoteWebServer {
         @media (max-width: 350px) {
           .faceplate { border-radius: 27px; }
           .deck { gap: 7px; }
-          .system-grid { gap: 5px; }
           .key { min-height: 42px; border-radius: 13px; gap: 3px; }
           #talk, .backspace, .enter { min-height: 52px; }
         }
@@ -807,16 +804,10 @@ final class RemoteWebServer {
         <section class="faceplate" aria-label="Mac keyboard remote">
           <span id="status" role="status" title="Connecting…"></span>
           <div class="deck">
-            <div class="system-grid">
-              <button class="key white-key" data-action="ctrlC" aria-label="Control C"><span class="glyph">ϟ</span><span class="key-label">Ctrl+C</span></button>
-              <button class="key white-key" data-action="mode_switch" aria-label="Switch Claude Code mode"><span class="glyph">↪</span><span class="key-label">Mode</span></button>
-            </div>
-
-            <div class="bottom-row">
-              <button class="key" id="talk" data-hold-action="talk" data-active-label="Listening…" aria-label="Hold to talk"><svg class="mic-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg><span class="key-label">Hold to Talk</span></button>
-              <button class="key white-key backspace" data-hold-action="backspace" data-active-label="Deleting…" aria-label="Hold to delete"><span class="glyph">⌫</span><span class="key-label">Delete</span></button>
-              <button class="key white-key enter" data-action="enter" aria-label="Enter"><span class="glyph">✓</span><span class="key-label">Enter</span></button>
-            </div>
+            <button class="key white-key" data-action="ctrlC" aria-label="Control C"><span class="glyph">ϟ</span><span class="key-label">Ctrl+C</span></button>
+            <button class="key white-key backspace" data-hold-action="backspace" data-active-label="Deleting…" aria-label="Hold to delete"><span class="glyph">⌫</span><span class="key-label">Delete</span></button>
+            <button class="key white-key enter" data-action="enter" aria-label="Enter"><span class="glyph">✓</span><span class="key-label">Enter</span></button>
+            <button class="key" id="talk" data-hold-action="talk" data-active-label="Listening…" aria-label="Hold to talk"><svg class="mic-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg><span class="key-label">Hold to Talk</span></button>
           </div>
         </section>
       </main>
