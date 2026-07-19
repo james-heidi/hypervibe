@@ -724,7 +724,7 @@ final class RemoteWebServer {
             radial-gradient(circle at 50% -15%, #292c31 0, #111317 40%, #08090b 76%),
             #090a0c;
         }
-        main { width: 50vw; height: 50dvh; margin: auto 0 0 auto; display: flex; }
+        main { width: calc(50vw - 10px); height: calc(50dvh - 10px); margin: auto 10px max(10px, env(safe-area-inset-bottom)) auto; display: flex; }
         #status { position: absolute; top: 12.5px; right: 12.5px; z-index: 2; width: 7px; height: 7px; border-radius: 50%; color: #f3b664; background: currentColor; box-shadow: 0 0 8px currentColor; }
         #status.ready { color: #73dc91; }
         .faceplate {
@@ -732,7 +732,7 @@ final class RemoteWebServer {
           flex: 1;
           display: flex;
           flex-direction: column;
-          padding-bottom: max(clamp(10px, 3vw, 14px), env(safe-area-inset-bottom));
+          padding-bottom: clamp(10px, 3vw, 14px);
           padding: clamp(10px, 3vw, 14px);
           overflow: hidden;
           border: 1px solid #f8f5ed;
