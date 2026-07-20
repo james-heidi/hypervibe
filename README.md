@@ -78,6 +78,16 @@ Assignable actions:
 - **Tap-to-click** on the trackpad surface
 - **Drag** by holding the trackpad click and moving
 
+### iPhone Remote
+
+HyperVibe can serve a touch remote directly to iPhone Safari, with buttons for Esc, Enter, arrow keys, Ctrl+C, and push-to-talk. No separate iOS app is required.
+
+1. Open the HyperVibe menu-bar menu and enable **iPhone Remote**.
+2. Click the **Connect: http://...** menu item to copy the connect URL, then open it in Safari on an iPhone connected to the same local network. The URL contains the private pairing token, so treat it as a secret.
+3. In Safari, choose **Share → Add to Home Screen** to install it as a PWA.
+
+The large **Hold to Talk** button presses the configured push-to-talk key for as long as it is held and releases it when the finger lifts or the page is hidden. The server binds only to the Mac's private local-network IPv4 address; it has no cloud or internet relay. Authenticated WebSocket heartbeats automatically release a held key if the heartbeat stops, the socket disconnects, the Mac sleeps, or the server restarts while rebinding after a network/IP change.
+
 ### Persistence
 
 Button mappings and swipe mappings are saved to UserDefaults (`buttonMappings`, `swipeMappings`) and survive restarts. Schema versioning handles future upgrades (`buttonMappingsSchema`).

@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version (conventional commits)
+        id: ver
+        run: |
+          latest=$(git tag --list 'v*' | sort -V | tail -1)
+          latest=${latest:-v0.2.0}
+          base=${latest#v}
+          major=$(echo "$base" | cut -d. -f1)
+          minor=$(echo "$base" | cut -d. -f2)
+          patch=$(echo "$base" | cut -d. -f3)
+
+          if git rev-parse "$latest" >/dev/null 2>&1; then
+            range="$latest..HEAD"
+          else
+            range="HEAD"
+          fi
+          subjects=$(git log --format=%s "$range")
+          bodies=$(git log --format=%B "$range")
+
+          bump=patch
+          if echo "$bodies" | grep -q "BREAKING CHANGE" || \
+             echo "$subjects" | grep -qE '^[a-z]+(\([^)]+\))?!:'; then
+            bump=major
+          elif echo "$subjects" | grep -qE '^feat(\([^)]+\))?:'; then
+            bump=minor
+          fi
+
+          case "$bump" in
+            major) next="$((major + 1)).0.0" ;;
+            minor) next="${major}.$((minor + 1)).0" ;;
+            patch) next="${major}.${minor}.$((patch + 1))" ;;
+          esac
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "Bump: $bump ($latest -> v$next)"
+
+      - name: Build (universal)
+        run: HYPERVIBE_UNIVERSAL=1 ./build.sh
+
+      - name: Bundle (ad-hoc signed on CI)
+        run: ./create_app_bundle.sh
+
+      - name: Package DMG
+        run: ./make_dmg.sh "${{ steps.ver.outputs.version }}"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          gh release create "v$v" "HyperVibe-$v.dmg" \
+            --title "HyperVibe v$v" \
+            --target "$GITHUB_SHA" \
+            --generate-notes \
+            --notes "Not notarized: first launch requires right-click → Open, or \`xattr -d com.apple.quarantine /Applications/HyperVibe.app\`. Grant Accessibility + Input Monitoring in System Settings."

@@ -12,6 +12,13 @@ import Carbon.HIToolbox
 import AppKit
 
 class RemoteInputHandler {
+    private struct HeldKey {
+        let id: UUID
+        let keyCode: Int
+        let flags: CGEventFlags
+        let repeatTimer: DispatchSourceTimer
+    }
+
     private let cursorController: CursorController
     private weak var menuBarManager: MenuBarManager?
     private var devices: [IOHIDDevice] = []
@@ -26,16 +33,24 @@ class RemoteInputHandler {
     private var isSelectPressed = false
     private var selectPressTime: UInt64 = 0
     private var isDragging = false
+    private var trackpadControlEnabled = true
     private let clickThreshold: Double = 0.25
     
     // Prevent double-processing with MediaKeyInterceptor
     static var lastProcessedButton: String?
     static var lastProcessedTime: UInt64 = 0
 
+    static func machDeltaToSeconds(from start: UInt64) -> Double {
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        let delta = mach_absolute_time() - start
+        return Double(delta) * Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
+    }
+
     /// Virtual keys currently held down, keyed by the HID button that initiated the hold.
     /// Captured at press time so release can fire the correct keyUp even if the user
     /// rebinds the button mid-hold. Cleared on device removal to avoid stuck modifiers.
-    private var heldKeys: [String: (keyCode: Int, flags: CGEventFlags)] = [:]
+    private var heldKeys: [String: HeldKey] = [:]
 
     /// Last observed pressed/released state per button. The Siri Remote mirrors each logical
     /// button across multiple HID interfaces (6 seized here), so every physical press/release
@@ -45,6 +60,20 @@ class RemoteInputHandler {
     init(cursorController: CursorController, menuBarManager: MenuBarManager) {
         self.cursorController = cursorController
         self.menuBarManager = menuBarManager
+    }
+
+    func setTrackpadControlEnabled(_ enabled: Bool) {
+        trackpadControlEnabled = enabled
+        guard !enabled else { return }
+
+        // Cancel a pending Select click and release an active drag immediately.
+        isSelectPressed = false
+        cursorController.isClickActive = false
+        if isDragging {
+            cursorController.isDragging = false
+            cursorController.mouseUp()
+        }
+        isDragging = false
     }
     
     func setRemoteDevice(_ device: IOHIDDevice?) {
@@ -117,16 +146,26 @@ class RemoteInputHandler {
             return
         }
 
-        // Select is the trackpad click — handled separately for click/drag semantics.
-        if buttonName == "select" {
-            handleSelectButton(pressed: intValue == 1)
+        // Select mapped to Mouse Click keeps the special click/drag semantics;
+        // any other mapping falls through to normal button dispatch below.
+        if buttonName == "select",
+           (menuBarManager?.getMapping(for: "select") ?? .trackpadClick) == .trackpadClick {
+            if trackpadControlEnabled {
+                handleSelectButton(pressed: intValue == 1)
+            }
             return
         }
 
         let pressed = (intValue == 1)
 
-        // Debounce only on press — release just closes an existing hold.
+        // Debounce only on press — release just closes an existing hold. Symmetric with
+        // the AVRCP path: whichever delivery arrives first records the press; the mirror
+        // arriving within 200 ms is dropped.
         if pressed {
+            if RemoteInputHandler.lastProcessedButton == buttonName,
+               RemoteInputHandler.machDeltaToSeconds(from: RemoteInputHandler.lastProcessedTime) < 0.2 {
+                return
+            }
             RemoteInputHandler.lastProcessedButton = buttonName
             RemoteInputHandler.lastProcessedTime = mach_absolute_time()
         }
@@ -185,7 +224,12 @@ class RemoteInputHandler {
         case (0x0C, 0x60): return "tv"            // TV button (actual)
         case (0x0C, 0x80): return "select"        // Selection
         case (0x0C, 0x41): return "select"        // Menu Select (alternative)
+        case (0x0C, 0x42): return "ringUp"        // Click-ring Up
+        case (0x0C, 0x43): return "ringDown"      // Click-ring Down
+        case (0x0C, 0x44): return "ringLeft"      // Click-ring Left
+        case (0x0C, 0x45): return "ringRight"     // Click-ring Right
         case (0x0C, 0xCD): return "playPause"     // Play/Pause
+        case (0x0C, 0xE2): return "mute"          // Mute
         case (0x0C, 0xE9): return "volumeUp"      // Volume Increment
         case (0x0C, 0xEA): return "volumeDown"    // Volume Decrement
         case (0x0C, 0xB5): return "nextTrack"     // Scan Next Track
@@ -217,7 +261,12 @@ class RemoteInputHandler {
     
     private func executeAction(_ action: ButtonAction, button: String, pressed: Bool) {
         if action.requiresHold {
-            handleHoldAction(action, button: button, pressed: pressed)
+            if holdCapableButtons.contains(button) {
+                handleHoldAction(action, button: button, pressed: pressed)
+            } else if action == .backspace, pressed {
+                // Press-only buttons (menu/tv/select) can't hold: fire a single tap instead.
+                sendKey(kVK_Delete)
+            }
             return
         }
         // Tap actions fire once, on press only.
@@ -231,53 +280,121 @@ class RemoteInputHandler {
             sendKey(kVK_UpArrow)
         case .downKey:
             sendKey(kVK_DownArrow)
+        case .leftKey:
+            sendKey(kVK_LeftArrow)
+        case .rightKey:
+            sendKey(kVK_RightArrow)
         case .escKey:
             sendKey(kVK_Escape)
         case .ctrlC:
             sendKey(kVK_ANSI_C, flags: .maskControl)
-        case .spaceKey, .rightCmd, .rightOpt:
+        case .backspace, .spaceKey, .rightCmd, .rightOpt, .f13Key:
             break // handled by handleHoldAction
         case .trackpadClick:
-            cursorController.performClick()
+            if trackpadControlEnabled {
+                cursorController.performClick()
+            }
         }
     }
 
-    /// Press/release a virtual key mirroring the HID press duration (push-to-talk).
+    /// Route an authenticated iPhone action through the same key lifecycle as HID input.
+    /// `sourceID` is server-generated and is never derived into a raw key code.
+    func handleExternalAction(_ action: ButtonAction, sourceID: String, pressed: Bool) {
+        // Web sourceIDs are not in holdCapableButtons; their down/up lifecycle is
+        // guaranteed by the server's heartbeat watchdog, so route holds directly.
+        if action.requiresHold {
+            handleHoldAction(action, button: sourceID, pressed: pressed)
+        } else {
+            executeAction(action, button: sourceID, pressed: pressed)
+        }
+    }
+
+    /// Release holds owned by one external connection without disturbing a physical remote hold.
+    func releaseHeldKeys(sourcePrefix: String) {
+        let matchingKeys = heldKeys.keys.filter { $0.hasPrefix(sourcePrefix) }
+        for key in matchingKeys {
+            guard let held = heldKeys.removeValue(forKey: key) else { continue }
+            releaseHeldKey(held)
+        }
+    }
+
+    /// Press/release a virtual key mirroring the source press duration, with system-like repeat.
     private func handleHoldAction(_ action: ButtonAction, button: String, pressed: Bool) {
         let spec: (keyCode: Int, flags: CGEventFlags)
         switch action {
+        case .backspace: spec = (kVK_Delete,       [])
         case .spaceKey: spec = (kVK_Space,        [])
         case .rightCmd: spec = (kVK_RightCommand, .maskCommand)
         case .rightOpt: spec = (kVK_RightOption,  .maskAlternate)
+        case .f13Key:   spec = (kVK_F13,          [])
         default: return
         }
 
         if pressed {
             // Defensive: if a prior release was missed, close the stale hold before opening a new one.
             if let stale = heldKeys.removeValue(forKey: button) {
-                postKey(keyCode: stale.keyCode, flags: [], keyDown: false)
+                releaseHeldKey(stale)
             }
             postKey(keyCode: spec.keyCode, flags: spec.flags, keyDown: true)
-            heldKeys[button] = spec
+
+            let holdID = UUID()
+            let repeatTimer = DispatchSource.makeTimerSource(queue: .main)
+            repeatTimer.schedule(
+                deadline: .now() + .milliseconds(250),
+                repeating: .milliseconds(33),
+                leeway: .milliseconds(2)
+            )
+            repeatTimer.setEventHandler { [weak self] in
+                guard let self = self,
+                      let held = self.heldKeys[button],
+                      held.id == holdID else { return }
+                self.postKey(
+                    keyCode: held.keyCode,
+                    flags: held.flags,
+                    keyDown: true,
+                    autorepeat: true
+                )
+            }
+            heldKeys[button] = HeldKey(
+                id: holdID,
+                keyCode: spec.keyCode,
+                flags: spec.flags,
+                repeatTimer: repeatTimer
+            )
+            repeatTimer.resume()
         } else {
             guard let held = heldKeys.removeValue(forKey: button) else { return }
-            postKey(keyCode: held.keyCode, flags: [], keyDown: false)
+            releaseHeldKey(held)
         }
     }
 
     /// Called on device removal to avoid stuck modifiers if the remote disconnects mid-hold.
-    private func releaseAllHeldKeys() {
-        for (_, held) in heldKeys {
-            postKey(keyCode: held.keyCode, flags: [], keyDown: false)
-        }
+    func releaseAllHeldKeys() {
+        let activeHolds = Array(heldKeys.values)
         heldKeys.removeAll()
+        for held in activeHolds {
+            releaseHeldKey(held)
+        }
         buttonState.removeAll()
     }
 
-    private func postKey(keyCode: Int, flags: CGEventFlags, keyDown: Bool) {
+    private func releaseHeldKey(_ held: HeldKey) {
+        held.repeatTimer.cancel()
+        postKey(keyCode: held.keyCode, flags: [], keyDown: false)
+    }
+
+    private func postKey(
+        keyCode: Int,
+        flags: CGEventFlags,
+        keyDown: Bool,
+        autorepeat: Bool = false
+    ) {
         let src = CGEventSource(stateID: .hidSystemState)
         let event = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(keyCode), keyDown: keyDown)
         event?.flags = flags
+        if autorepeat {
+            event?.setIntegerValueField(.keyboardEventAutorepeat, value: 1)
+        }
         event?.post(tap: .cghidEventTap)
     }
 

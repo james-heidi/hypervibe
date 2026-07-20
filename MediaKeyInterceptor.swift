@@ -36,8 +36,10 @@ class MediaKeyInterceptor {
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
+            rmDebug("🎧 media-key tap creation FAILED (missing Input Monitoring/Accessibility?)")
             return
         }
+        rmDebug("🎧 media-key tap created")
         
         eventTap = tap
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
@@ -97,6 +99,7 @@ class MediaKeyInterceptor {
         
         // Check subtype 8 = media key event
         guard nsEvent.subtype.rawValue == 8 else {
+            rmDebug(String(format: "🎧 NX_SYSDEFINED non-media subtype=%d data1=0x%llX", nsEvent.subtype.rawValue, Int64(nsEvent.data1)))
             return Unmanaged.passRetained(event)
         }
         
@@ -106,6 +109,7 @@ class MediaKeyInterceptor {
         let keyState = (keyFlags & 0xFF00) >> 8
         let isKeyDown = keyState == 0x0A
         
+        rmDebug(String(format: "🎧 media key code=%d state=%@", keyCode, isKeyDown ? "down" : "up"))
         // Only handle key down events
         guard isKeyDown else {
             return Unmanaged.passRetained(event)

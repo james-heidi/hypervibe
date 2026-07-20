@@ -37,3 +37,5 @@ Thumbs.db
 # macOS
 .AppleDouble
 .LSOverride
+HyperVibe.app/
+HyperVibe-*.dmg
