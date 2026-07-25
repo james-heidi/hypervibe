@@ -209,6 +209,12 @@ class MenuBarManager {
     /// Set by AppDelegate to update touch and physical-click handling immediately.
     var onTrackpadControlToggle: ((Bool) -> Void)?
 
+    /// Set by AppDelegate for A2854 remote-mic capture toggle.
+    var onRemoteMicToggle: ((Bool) -> Void)?
+    var remoteMicEnabled = true
+    private var remoteMicStatusText = "麦克风: 未启动"
+    private var remoteMicStatusItem: NSMenuItem?
+
     init(statusItem: NSStatusItem) {
         self.statusItem = statusItem
         self.menu = NSMenu()
@@ -377,6 +383,20 @@ class MenuBarManager {
         // Status
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
+
+        let micStatus = NSMenuItem(title: remoteMicStatusText, action: nil, keyEquivalent: "")
+        micStatus.isEnabled = false
+        remoteMicStatusItem = micStatus
+        menu.addItem(micStatus)
+
+        let micToggle = NSMenuItem(
+            title: "远程麦克风 (A2854 → BlackHole)",
+            action: #selector(toggleRemoteMic(_:)),
+            keyEquivalent: ""
+        )
+        micToggle.target = self
+        micToggle.state = remoteMicEnabled ? .on : .off
+        menu.addItem(micToggle)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -587,6 +607,29 @@ class MenuBarManager {
             self.remoteServerError = error
             self.rebuildMenu()
         }
+    }
+
+    func updateRemoteMicStatus(enabled: Bool, statusText: String, sinkName: String?) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.remoteMicEnabled = enabled
+            self.remoteMicStatusText = statusText
+            self.remoteMicStatusItem?.title = statusText
+            // Rebuild so the toggle checkmark stays in sync without thrashing every frame
+            // only when enablement flips; status title updates in place above.
+            if self.menu.items.contains(where: {
+                $0.action == #selector(self.toggleRemoteMic(_:)) && ($0.state == .on) != enabled
+            }) {
+                self.rebuildMenu()
+            }
+            _ = sinkName
+        }
+    }
+
+    @objc private func toggleRemoteMic(_ sender: NSMenuItem) {
+        remoteMicEnabled.toggle()
+        onRemoteMicToggle?(remoteMicEnabled)
+        rebuildMenu()
     }
 
     private static func makeQRCode(for value: String) -> NSImage? {

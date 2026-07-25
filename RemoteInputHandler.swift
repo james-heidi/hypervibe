@@ -25,6 +25,9 @@ class RemoteInputHandler {
     
     /// Called on any button activity; use to trigger trackpad re-scan after remote wake.
     var onButtonActivity: (() -> Void)?
+
+    /// Siri button press/release for the remote-mic pipeline (runs alongside mapped actions).
+    var onSiriMic: ((Bool) -> Void)?
     
     // First press after connection: do not perform action (sound already played at connect).
     private var isFirstPressAfterConnection = false
@@ -61,6 +64,9 @@ class RemoteInputHandler {
         self.cursorController = cursorController
         self.menuBarManager = menuBarManager
     }
+
+    /// HID devices currently opened/seized for the paired remote.
+    var seizedDevices: [IOHIDDevice] { devices }
 
     func setTrackpadControlEnabled(_ enabled: Bool) {
         trackpadControlEnabled = enabled
@@ -168,6 +174,10 @@ class RemoteInputHandler {
             }
             RemoteInputHandler.lastProcessedButton = buttonName
             RemoteInputHandler.lastProcessedTime = mach_absolute_time()
+        }
+
+        if buttonName == "siri" {
+            onSiriMic?(pressed)
         }
 
         let action = menuBarManager?.getMapping(for: buttonName) ?? ButtonAction.none

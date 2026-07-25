@@ -1,0 +1,5 @@
+module Opus [system] {
+    header "include/opus/opus.h"
+    link "opus"
+    export *
+}

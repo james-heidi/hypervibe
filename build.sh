@@ -19,7 +19,22 @@ SWIFT_FILES=(
     "MediaKeyInterceptor.swift"
     "TouchHandler.swift"
     "SystemVolume.swift"
+    "OpusVoiceDecoder.swift"
+    "BlackHoleAudioSink.swift"
+    "MicActivator.swift"
+    "MicCapturePipeline.swift"
+    "RemoteMicController.swift"
+    "HCIEventTap.swift"
 )
+
+OPUS_INCLUDE="${OPUS_INCLUDE:-Vendor/libopus/include}"
+OPUS_LIB="${OPUS_LIB:-Vendor/libopus/lib}"
+if [[ -d /opt/homebrew/opt/opus/include && -f /opt/homebrew/opt/opus/lib/libopus.a ]]; then
+    OPUS_INCLUDE=/opt/homebrew/opt/opus/include
+    OPUS_LIB=/opt/homebrew/opt/opus/lib
+fi
+# Match host SDK so Homebrew libopus (built for current macOS) links cleanly.
+MACOSX_MIN="${MACOSX_MIN:-$(sw_vers -productVersion | cut -d. -f1).0}"
 
 # Find SDK path
 SDK_PATH=$(xcrun --show-sdk-path --sdk macosx 2>/dev/null || echo "")
@@ -34,13 +49,13 @@ echo "Using SDK: $SDK_PATH"
 
 # Architectures: host-only by default; HYPERVIBE_UNIVERSAL=1 builds arm64+x86_64 and lipo-merges.
 if [ "${HYPERVIBE_UNIVERSAL:-0}" = "1" ]; then
-    TARGETS=("arm64-apple-macosx11.0" "x86_64-apple-macosx11.0")
+    TARGETS=("arm64-apple-macosx${MACOSX_MIN}" "x86_64-apple-macosx${MACOSX_MIN}")
 else
     ARCH=$(uname -m)
     if [ "$ARCH" == "arm64" ]; then
-        TARGETS=("arm64-apple-macosx11.0")
+        TARGETS=("arm64-apple-macosx${MACOSX_MIN}")
     else
-        TARGETS=("x86_64-apple-macosx11.0")
+        TARGETS=("x86_64-apple-macosx${MACOSX_MIN}")
     fi
 fi
 
@@ -59,6 +74,9 @@ for TARGET in "${TARGETS[@]}"; do
         -o "$SLICE" \
         "${SWIFT_FILES[@]}" \
         -import-objc-header SiriRemote-Bridging-Header.h \
+        -I "$OPUS_INCLUDE" \
+        -L "$OPUS_LIB" \
+        -lopus \
         -F "$SDK_PATH/System/Library/PrivateFrameworks" \
         -framework IOKit \
         -framework CoreGraphics \
@@ -66,6 +84,8 @@ for TARGET in "${TARGETS[@]}"; do
         -framework Carbon \
         -framework AppKit \
         -framework Network \
+        -framework CoreAudio \
+        -framework IOBluetooth \
         -framework MultitouchSupport
     SLICES+=("$SLICE")
 done

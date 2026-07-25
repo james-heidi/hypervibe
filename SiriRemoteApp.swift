@@ -19,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var mediaKeyInterceptor: MediaKeyInterceptor?
     private var touchHandler: TouchHandler?
     private var remoteWebServer: RemoteWebServer?
+    private var remoteMicController: RemoteMicController?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("🚀 HyperVibe starting...")
@@ -96,12 +97,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         remoteInputHandler?.onButtonActivity = { [weak self] in
             self?.touchHandler?.tryReconnectTrackpad()
         }
+
+        // A2854 remote mic → PacketLogger HCI → Opus → BlackHole (zero extra hardware).
+        let mic = RemoteMicController()
+        remoteMicController = mic
+        menuBarManager.onRemoteMicToggle = { [weak mic] enabled in
+            mic?.setEnabled(enabled)
+        }
+        menuBarManager.remoteMicEnabled = mic.enabled
+        mic.onStatus = { [weak self] status, deviceName in
+            self?.menuBarManager.updateRemoteMicStatus(
+                enabled: self?.remoteMicController?.enabled ?? false,
+                statusText: self?.remoteMicController?.statusText ?? status.menuLabel,
+                sinkName: deviceName
+            )
+        }
+        inputHandler.onSiriMic = { [weak mic] pressed in
+            mic?.handleSiri(pressed: pressed)
+        }
+        mic.startIdleCaptureIfEnabled()
         
         // Start remote detection
         remoteDetector = RemoteDetector { [weak self] device in
             DispatchQueue.main.async {
                 self?.remoteInputHandler?.setRemoteDevice(device)
                 self?.menuBarManager.updateConnectionStatus(connected: device != nil)
+                if let devices = self?.remoteInputHandler?.seizedDevices {
+                    self?.remoteMicController?.attachSeizedDevices(devices)
+                }
             }
         }
         remoteDetector?.startDetection()
@@ -136,6 +159,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func cleanup() {
+        remoteMicController?.shutdown()
         remoteWebServer?.shutdown()
         remoteInputHandler?.releaseAllHeldKeys()
         touchHandler?.stop()

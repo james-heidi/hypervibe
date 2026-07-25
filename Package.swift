@@ -25,7 +25,13 @@ let package = Package(
                 "MediaController.swift",
                 "MediaKeyInterceptor.swift",
                 "TouchHandler.swift",
-                "SystemVolume.swift"
+                "SystemVolume.swift",
+                "OpusVoiceDecoder.swift",
+                "BlackHoleAudioSink.swift",
+                "MicActivator.swift",
+                "MicCapturePipeline.swift",
+                "RemoteMicController.swift",
+                "HCIEventTap.swift"
             ],
             linkerSettings: [
                 .linkedFramework("IOKit"),
@@ -33,7 +39,10 @@ let package = Package(
                 .linkedFramework("AudioToolbox"),
                 .linkedFramework("Carbon"),
                 .linkedFramework("AppKit"),
-                .linkedFramework("Network")
+                .linkedFramework("Network"),
+                .linkedFramework("CoreAudio"),
+                .linkedFramework("IOBluetooth"),
+                .linkedLibrary("opus")
             ]
         )
     ]

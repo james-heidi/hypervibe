@@ -32,6 +32,11 @@ open HyperVibe.app
 | `TouchHandler.swift` | Trackpad via private MultitouchSupport: cursor, scroll, tap, swipe detection |
 | `CursorController.swift` | Posts mouse events |
 | `SystemVolume.swift` | Volume get/set + `VolumeRevertGuard` |
+| `RemoteMicController.swift` | A2854 mic orchestration (activate + capture + decode + BlackHole) |
+| `MicCapturePipeline.swift` | PacketLogger HCI nhdr stream / offline replay |
+| `OpusVoiceDecoder.swift` | A2854 Opus → 48 kHz PCM |
+| `BlackHoleAudioSink.swift` | PCM → BlackHole 2ch (system-selectable mic) |
+| `MicActivator.swift` | Host-side `0xAF` / PushToTalk activation probes |
 
 ## Fragile invariants — do not "clean up"
 

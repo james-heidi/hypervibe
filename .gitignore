@@ -1,6 +1,8 @@
 # Build artifacts
 Remotastic
 Remotastic.app/
+HyperVibe
+Vendor/libopus/lib/*.a
 
 # Xcode
 .swiftpm/
