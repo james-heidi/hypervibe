@@ -31,7 +31,9 @@ let package = Package(
                 "MicActivator.swift",
                 "MicCapturePipeline.swift",
                 "RemoteMicController.swift",
-                "HCIEventTap.swift"
+                "RemoteMicLab.swift",
+                "HCIEventTap.swift",
+                "DurableCaptureSpike.swift"
             ],
             linkerSettings: [
                 .linkedFramework("IOKit"),

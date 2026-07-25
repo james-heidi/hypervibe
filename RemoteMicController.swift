@@ -25,7 +25,8 @@ final class RemoteMicController {
 
     init() {
         let defaults = UserDefaults.standard
-        enabled = defaults.object(forKey: "remoteMicEnabled") as? Bool ?? true
+        // Lab is opt-in. Existing installs that already flipped the key keep their choice.
+        enabled = defaults.object(forKey: RemoteMicLab.enabledDefaultsKey) as? Bool ?? false
         capture = MicCapturePipeline()
         decoder = OpusVoiceDecoder()
         if decoder == nil {
@@ -40,23 +41,44 @@ final class RemoteMicController {
     }
 
     var statusText: String {
+        if !enabled { return "麦克风 Lab: 未启用" }
         var parts = [capture.status.menuLabel]
         if let name = sink.deviceName {
             parts.append("→ \(name)")
         } else if !sink.isAvailable {
             parts.append("BlackHole 未安装")
         }
-        if !enabled { return "麦克风: 已禁用" }
+        let profile = MicCapturePipeline.bluetoothProfileInstalled()
+        if !profile {
+            parts.append("·配置失效")
+        } else if let seen = UserDefaults.standard.object(forKey: RemoteMicLab.profileSeenAtKey) as? Double {
+            let age = Date().timeIntervalSince1970 - seen
+            // Soft warn inside the last half-day of a typical 3-day profile window.
+            if age >= (3 * 24 * 60 * 60 - 12 * 60 * 60) {
+                parts.append("·配置将过期")
+            }
+        }
         return parts.joined(separator: " ")
     }
 
     func setEnabled(_ on: Bool) {
         enabled = on
-        UserDefaults.standard.set(on, forKey: "remoteMicEnabled")
-        if !on {
+        UserDefaults.standard.set(on, forKey: RemoteMicLab.enabledDefaultsKey)
+        if on {
+            startIdleCaptureIfEnabled()
+        } else {
             stopSession()
+            capture.stop()
+            hciTap.stop()
+            activator.disarm()
+            sink.stop()
         }
         publishStatus()
+    }
+
+    /// Fresh readiness snapshot for menu / wizard.
+    func readiness() -> RemoteMicReadiness {
+        RemoteMicLab.evaluate()
     }
 
     /// Begin PacketLogger + sink when the app launches (idle listen).

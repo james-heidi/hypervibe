@@ -98,7 +98,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.touchHandler?.tryReconnectTrackpad()
         }
 
-        // A2854 remote mic → PacketLogger HCI → Opus → BlackHole (zero extra hardware).
+        // A2854 remote mic Lab → PacketLogger HCI → Opus → BlackHole (opt-in).
         let mic = RemoteMicController()
         remoteMicController = mic
         menuBarManager.onRemoteMicToggle = { [weak mic] enabled in

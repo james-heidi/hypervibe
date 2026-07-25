@@ -24,7 +24,9 @@ SWIFT_FILES=(
     "MicActivator.swift"
     "MicCapturePipeline.swift"
     "RemoteMicController.swift"
+    "RemoteMicLab.swift"
     "HCIEventTap.swift"
+    "DurableCaptureSpike.swift"
 )
 
 OPUS_INCLUDE="${OPUS_INCLUDE:-Vendor/libopus/include}"

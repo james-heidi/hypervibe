@@ -128,7 +128,7 @@ This runs a single `swiftc` invocation over all the project's Swift files, linki
    - **Bluetooth** (to communicate with the remote)
 5. Pair the Siri Remote via **System Settings → Bluetooth** if it isn't already paired
 6. Use the menu-bar walkie-talkie glyph to access Button Mappings and Swipe Gestures
-7. **Optional — A2854 remote microphone (no USB dongle):** run `./scripts/setup_remote_mic.sh`, install Apple’s Bluetooth logging profile + PacketLogger + BlackHole 2ch (reboot), then enable **远程麦克风** in the menu. Hold Siri and set your dictation app’s input to **BlackHole 2ch**. Details: [docs/remote-mic.md](docs/remote-mic.md).
+7. **Remote microphone:** consumer path is **parked** (no durable zero-hardware capture without PacketLogger + a temporary Apple Bluetooth profile). Buttons/trackpad are unaffected. Developer notes and spike results: [docs/remote-mic.md](docs/remote-mic.md), [docs/spike-durable-capture.md](docs/spike-durable-capture.md).
 
 > ⚠️ **Important:** You must explicitly add **HyperVibe.app** to **System Settings → Privacy & Security → Input Monitoring** (click the **+** button and select the app). Without this, HyperVibe may not properly intercept HID events/media keys, which means vol up and down buttons and play/pause buttons will trigger volume change and triggering of Apple Music.
 

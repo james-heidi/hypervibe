@@ -10,13 +10,19 @@ import Foundation
 
 let args = CommandLine.arguments
 if args.contains("--mic-check") {
+    let r = RemoteMicLab.evaluate()
+    print("Lab ready:", r.isReady)
     print("PacketLogger:", MicCapturePipeline.packetLoggerURL()?.path ?? "MISSING")
-    print("Bluetooth profile installed:", MicCapturePipeline.bluetoothProfileInstalled())
-    print("Remote address:", MicCapturePipeline.detectRemoteAddress() ?? "MISSING")
-    let sink = BlackHoleAudioSink()
-    print("BlackHole available:", sink.isAvailable)
+    print("Bluetooth profile installed:", r.bluetoothProfile)
+    print("Profile likely expired:", r.profileLikelyExpired)
+    print("Profile expiring soon:", r.profileExpiringSoon)
+    print("Remote address:", r.remoteAddress ?? "MISSING")
+    print("BlackHole available:", r.blackHole)
+    print("Passwordless PacketLogger:", r.passwordlessPacketLogger)
     print("Opus decoder:", OpusVoiceDecoder() != nil ? "ok" : "FAILED")
-    exit(0)
+    print("---")
+    print(r.checklistText)
+    exit(r.isReady ? 0 : 1)
 }
 
 if args.contains("--test-opus") {
@@ -148,6 +154,40 @@ if args.contains("--activate-mic") {
     tap.stop()
     print("done — HCI events=\(tap.eventCount); see /tmp/hypervibe.log")
     exit(0)
+}
+
+if args.contains("--spike-a") {
+    let rest = Array(args.drop(while: { $0 != "--spike-a" }).dropFirst())
+    let sec = Double(rest.first ?? "12") ?? 12
+    print("Spike A: hold Siri and speak for \(Int(sec))s…")
+    print(DurableCaptureSpike.runSpikeA(durationSec: sec))
+    exit(0)
+}
+
+if args.contains("--spike-b") {
+    print(DurableCaptureSpike.runSpikeB())
+    exit(0)
+}
+
+if args.contains("--spike-durable") {
+    let rest = Array(args.drop(while: { $0 != "--spike-durable" }).dropFirst())
+    let sec = Double(rest.first ?? "12") ?? 12
+    print("Durable capture spike: hold Siri and speak for \(Int(sec))s during Spike A…")
+    let report = DurableCaptureSpike.runAll(spikeADuration: sec)
+    print(report)
+    let out = URL(fileURLWithPath: "/tmp/hypervibe-spike-durable.txt")
+    try? report.write(to: out, atomically: true, encoding: .utf8)
+    print("wrote \(out.path)")
+    // 2 = GATE FAIL (park consumer mic); 0 = PASS; 1 = partial / inconclusive.
+    let code: Int32
+    if report.contains("GATE: FAIL") {
+        code = 2
+    } else if report.contains("GATE: PASS") {
+        code = 0
+    } else {
+        code = 1
+    }
+    exit(code)
 }
 
 // Create the application instance

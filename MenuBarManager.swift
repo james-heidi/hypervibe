@@ -209,11 +209,10 @@ class MenuBarManager {
     /// Set by AppDelegate to update touch and physical-click handling immediately.
     var onTrackpadControlToggle: ((Bool) -> Void)?
 
-    /// Set by AppDelegate for A2854 remote-mic capture toggle.
+    /// Set by AppDelegate for the A2854 remote-mic toggle.
     var onRemoteMicToggle: ((Bool) -> Void)?
-    var remoteMicEnabled = true
-    private var remoteMicStatusText = "麦克风: 未启动"
-    private var remoteMicStatusItem: NSMenuItem?
+    var remoteMicEnabled = false
+    private var remoteMicStatusText = "遥控器麦克风"
 
     init(statusItem: NSStatusItem) {
         self.statusItem = statusItem
@@ -384,13 +383,8 @@ class MenuBarManager {
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
 
-        let micStatus = NSMenuItem(title: remoteMicStatusText, action: nil, keyEquivalent: "")
-        micStatus.isEnabled = false
-        remoteMicStatusItem = micStatus
-        menu.addItem(micStatus)
-
         let micToggle = NSMenuItem(
-            title: "远程麦克风 (A2854 → BlackHole)",
+            title: remoteMicStatusText,
             action: #selector(toggleRemoteMic(_:)),
             keyEquivalent: ""
         )
@@ -613,13 +607,19 @@ class MenuBarManager {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.remoteMicEnabled = enabled
-            self.remoteMicStatusText = statusText
-            self.remoteMicStatusItem?.title = statusText
-            // Rebuild so the toggle checkmark stays in sync without thrashing every frame
-            // only when enablement flips; status title updates in place above.
-            if self.menu.items.contains(where: {
+            let title: String
+            if !enabled {
+                title = "遥控器麦克风"
+            } else if statusText.contains("采集中") {
+                title = "遥控器麦克风 — 正在聆听"
+            } else {
+                title = "遥控器麦克风 — 已开启"
+            }
+            let needsRebuild = title != self.remoteMicStatusText || self.menu.items.contains(where: {
                 $0.action == #selector(self.toggleRemoteMic(_:)) && ($0.state == .on) != enabled
-            }) {
+            })
+            self.remoteMicStatusText = title
+            if needsRebuild {
                 self.rebuildMenu()
             }
             _ = sinkName
@@ -627,9 +627,27 @@ class MenuBarManager {
     }
 
     @objc private func toggleRemoteMic(_ sender: NSMenuItem) {
-        remoteMicEnabled.toggle()
-        onRemoteMicToggle?(remoteMicEnabled)
-        rebuildMenu()
+        if remoteMicEnabled {
+            remoteMicEnabled = false
+            onRemoteMicToggle?(false)
+            rebuildMenu()
+            return
+        }
+        // Consumer path parked (durable capture spike FAIL). Developers who already
+        // have Lab tools can still enable; everyone else gets a short notice.
+        if RemoteMicLab.consumerMicParked && !RemoteMicLab.evaluate().isReady {
+            RemoteMicLab.presentUnavailableMessage()
+            rebuildMenu()
+            return
+        }
+        if RemoteMicLab.consumerMicParked {
+            // Ready Lab machine: allow enable without exposing setup UI.
+            remoteMicEnabled = true
+            onRemoteMicToggle?(true)
+            rebuildMenu()
+            return
+        }
+        RemoteMicLab.presentUnavailableMessage()
     }
 
     private static func makeQRCode(for value: String) -> NSImage? {
