@@ -68,6 +68,9 @@ jobs:
           echo "version=$next" >> "$GITHUB_OUTPUT"
           echo "Bump: $bump ($latest -> v$next)"
 
+      - name: Install opus (linked statically by build.sh)
+        run: brew install opus
+
       # FluidAudio object linking doesn't support universal builds yet
       # (build.sh rejects HYPERVIBE_UNIVERSAL=1), so releases are Apple
       # Silicon only for now — the macos-14 runner is arm64.

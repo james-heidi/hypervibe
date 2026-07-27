@@ -44,6 +44,13 @@ if [[ -d /opt/homebrew/opt/opus/include && -f /opt/homebrew/opt/opus/lib/libopus
     OPUS_INCLUDE=/opt/homebrew/opt/opus/include
     OPUS_LIB=/opt/homebrew/opt/opus/lib
 fi
+# Opus is linked statically (the .a is passed directly to the linker) so the
+# shipped app has no Homebrew dylib dependency.
+if [[ ! -f "$OPUS_LIB/libopus.a" ]]; then
+    echo "Error: libopus.a not found in $OPUS_LIB."
+    echo "  Install it with: brew install opus"
+    exit 1
+fi
 
 # FluidAudio requires macOS 14+. Pin deployment target (do not follow host major).
 HOST_MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
@@ -132,9 +139,8 @@ for TARGET in "${TARGETS[@]}"; do
         -I "$FLUID_BIN/Modules" \
         -I "$FLUID_FASTCLUSTER_INC" \
         -I "$FLUID_MACHTASK_INC" \
-        -L "$OPUS_LIB" \
         -L "$FLUID_BIN" \
-        -lopus \
+        "$OPUS_LIB/libopus.a" \
         -lFluidAudio \
         -lFastClusterWrapper \
         -lMachTaskSelfWrapper \
