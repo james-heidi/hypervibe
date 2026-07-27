@@ -234,6 +234,15 @@ final class RemoteMicController {
         activator.disarm()
     }
 
+    /// AGENTS.md invariant: push-to-talk must end when the remote disconnects.
+    /// Without this, a Siri press with no matching key-up sticks forever —
+    /// handleSiri swallows all later presses while `siriHeld` is true.
+    func remoteDidDisconnect() {
+        guard siriHeld else { return }
+        rmDebug("🎤 remote disconnected while Siri held — forcing release")
+        handleSiri(pressed: false)
+    }
+
     @discardableResult
     func handleSiri(pressed: Bool) -> Bool {
         guard enabled else { return false }

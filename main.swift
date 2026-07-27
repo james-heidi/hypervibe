@@ -153,9 +153,17 @@ if args.contains("--activate-mic") {
     exit(0)
 }
 
+/// Parses a spike observation window, rejecting non-finite values and
+/// clamping to 1–300s so a typo can't produce an empty or unbounded run.
+func spikeDurationSeconds(_ raw: String?) -> Double {
+    let parsed = Double(raw ?? "") ?? 12
+    guard parsed.isFinite else { return 12 }
+    return min(max(parsed, 1), 300)
+}
+
 if args.contains("--spike-a") {
     let rest = Array(args.drop(while: { $0 != "--spike-a" }).dropFirst())
-    let sec = Double(rest.first ?? "12") ?? 12
+    let sec = spikeDurationSeconds(rest.first)
     print("Spike A: hold Siri and speak for \(Int(sec))s…")
     print(DurableCaptureSpike.runSpikeA(durationSec: sec))
     exit(0)
@@ -168,7 +176,7 @@ if args.contains("--spike-b") {
 
 if args.contains("--spike-durable") {
     let rest = Array(args.drop(while: { $0 != "--spike-durable" }).dropFirst())
-    let sec = Double(rest.first ?? "12") ?? 12
+    let sec = spikeDurationSeconds(rest.first)
     print("Durable capture spike: hold Siri and speak for \(Int(sec))s during Spike A…")
     let report = DurableCaptureSpike.runAll(spikeADuration: sec)
     print(report)

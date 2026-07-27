@@ -67,7 +67,7 @@ Button mappings are saved to UserDefaults (`buttonMappings`) and survive restart
 
 ### Prerequisites
 
-- macOS 11 (Big Sur) or later
+- macOS 14 (Sonoma) or later
 - Xcode Command Line Tools: `xcode-select --install`
 
 ### Build

@@ -151,6 +151,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     // of waiting for the first Siri press.
                     ensureDictation()
                     self?.remoteMicController?.ensureCaptureWarm()
+                } else {
+                    // Release any held push-to-talk — a disconnect mid-press means the
+                    // Siri key-up will never arrive.
+                    self?.remoteMicController?.remoteDidDisconnect()
                 }
             }
         }

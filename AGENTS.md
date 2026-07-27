@@ -13,7 +13,7 @@ open HyperVibe.app
 ```
 
 - Adding a new .swift file: add it to BOTH `build.sh` (SWIFT_FILES) and `Package.swift` (sources).
-- Requires macOS 11+, Xcode CLT. Links private `MultitouchSupport.framework` via `SiriRemote-Bridging-Header.h`.
+- Requires macOS 14+ (FluidAudio/Parakeet dependency; enforced by `build.sh`), Xcode CLT. Links private `MultitouchSupport.framework` via `SiriRemote-Bridging-Header.h`.
 - Needs Accessibility + Input Monitoring + Bluetooth TCC grants. Ad-hoc signing ties grants to binary hash — rebuilds may need re-approval.
 - No tests. Verification is manual with a paired remote. Diagnostic log: `/tmp/hypervibe.log` (use `rmDebug()`, not NSLog — NSLog is redacted under hardened runtime).
 

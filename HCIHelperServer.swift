@@ -60,8 +60,13 @@ final class HCIHelperServer {
             close(fd)
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
-        // Authenticated peers only — world-writable was a local root RCE vector.
-        chmod(socketPath, 0o666)
+        // Defense in depth: root:staff 0660 lets human console users connect while
+        // blocking daemon/service accounts at the filesystem. We can't chown to the
+        // console user here — the daemon starts at boot, before login, and the
+        // console user changes with fast user switching. Peer-cred auth in
+        // handleClient is the authoritative gate.
+        chown(socketPath, 0, 20) // root:staff
+        chmod(socketPath, 0o660)
         guard listen(fd, 8) == 0 else {
             close(fd)
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
