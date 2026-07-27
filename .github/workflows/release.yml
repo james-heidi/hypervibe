@@ -19,6 +19,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Select Xcode 16 (Swift 6 toolchain)
+        run: |
+          # FluidAudio 0.15.5 + Vendor/FluidAudioDeps require swift-tools 6.0.
+          # The macos-14 image defaults to Xcode 15.4 (Swift 5.10); pick the
+          # newest installed Xcode 16.x so `swift build` sees Swift 6.
+          xcode=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$xcode" ]; then
+            echo "No Xcode 16.x found on runner:" >&2
+            ls -d /Applications/Xcode_*.app >&2 || true
+            exit 1
+          fi
+          echo "Selecting $xcode"
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          swift --version
+
       - name: Compute next version (conventional commits)
         id: ver
         run: |
@@ -53,8 +68,11 @@ jobs:
           echo "version=$next" >> "$GITHUB_OUTPUT"
           echo "Bump: $bump ($latest -> v$next)"
 
-      - name: Build (universal)
-        run: HYPERVIBE_UNIVERSAL=1 ./build.sh
+      # FluidAudio object linking doesn't support universal builds yet
+      # (build.sh rejects HYPERVIBE_UNIVERSAL=1), so releases are Apple
+      # Silicon only for now — the macos-14 runner is arm64.
+      - name: Build (arm64)
+        run: ./build.sh
 
       - name: Bundle (ad-hoc signed on CI)
         run: ./create_app_bundle.sh
@@ -71,4 +89,4 @@ jobs:
             --title "HyperVibe v$v" \
             --target "$GITHUB_SHA" \
             --generate-notes \
-            --notes "Not notarized: first launch requires right-click → Open, or \`xattr -d com.apple.quarantine /Applications/HyperVibe.app\`. Grant Accessibility + Input Monitoring in System Settings."
+            --notes "Apple Silicon only (arm64). Not notarized: first launch requires right-click → Open, or \`xattr -d com.apple.quarantine /Applications/HyperVibe.app\`. Grant Accessibility + Input Monitoring in System Settings."
