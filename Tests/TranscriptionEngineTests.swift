@@ -52,6 +52,9 @@ struct TranscriptionEngineTests {
         let json = #"{"text":"  hello world  "}"#.data(using: .utf8)!
         let parsed = try! OpenAITranscriptionEngine.parseTranscriptJSON(json)
         expect(parsed == "hello world", "JSON text must be trimmed")
+        let emptyJSON = #"{"text":""}"#.data(using: .utf8)!
+        let empty = try! OpenAITranscriptionEngine.parseTranscriptJSON(emptyJSON)
+        expect(empty.isEmpty, "valid empty transcript must be a silent no-op")
 
         let engine = OpenAITranscriptionEngine()
         engine.transport = { request, body in

@@ -22,16 +22,38 @@ extension NSAlert {
     }
 }
 
+private final class HyperVibeModalPanel: NSPanel {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command),
+              let key = event.charactersIgnoringModifiers?.lowercased() else {
+            return super.performKeyEquivalent(with: event)
+        }
+
+        let selector: Selector?
+        switch key {
+        case "v": selector = #selector(NSText.paste(_:))
+        case "c": selector = #selector(NSText.copy(_:))
+        case "x": selector = #selector(NSText.cut(_:))
+        case "a": selector = #selector(NSText.selectAll(_:))
+        default: selector = nil
+        }
+        guard let selector else {
+            return super.performKeyEquivalent(with: event)
+        }
+        return NSApp.sendAction(selector, to: nil, from: self)
+    }
+}
+
 private final class HyperVibeAlertPanel: NSObject {
     private let alert: NSAlert
-    private var panel: NSPanel!
+    private var panel: HyperVibeModalPanel!
 
     init(alert: NSAlert) {
         self.alert = alert
     }
 
     func runModal() -> NSApplication.ModalResponse {
-        panel = NSPanel(
+        panel = HyperVibeModalPanel(
             contentRect: NSRect(x: 0, y: 0, width: 360, height: 180),
             styleMask: [.titled, .fullSizeContentView],
             backing: .buffered,
@@ -113,6 +135,9 @@ private final class HyperVibeAlertPanel: NSObject {
         panel.center()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        if let accessory = alert.accessoryView {
+            panel.makeFirstResponder(accessory)
+        }
 
         let response = NSApp.runModal(for: panel)
         panel.orderOut(nil)
@@ -229,6 +254,214 @@ enum ScrollSpeed: String, CaseIterable {
     }
 }
 
+private final class AudioWaveformView: NSView {
+    private var timer: Timer?
+    private var phase: CGFloat = 0
+    private var targetLevel: CGFloat = 0
+    private var displayedLevel: CGFloat = 0
+    private var reactive = false
+
+    override var isFlipped: Bool { true }
+
+    func start(reactive: Bool) {
+        self.reactive = reactive
+        if !reactive {
+            targetLevel = 0
+            displayedLevel = 0
+        }
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) {
+            [weak self] _ in
+            self?.tick()
+        }
+    }
+
+    func setReactive(_ reactive: Bool) {
+        self.reactive = reactive
+    }
+
+    func setLevel(_ level: Float) {
+        targetLevel = CGFloat(max(0, min(1, level)))
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        targetLevel = 0
+        displayedLevel = 0
+        needsDisplay = true
+    }
+
+    private func tick() {
+        phase += 0.16
+        if reactive {
+            displayedLevel += (targetLevel - displayedLevel) * 0.34
+            targetLevel *= 0.88
+        }
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let barCount = 7
+        let barWidth: CGFloat = 5
+        let spacing: CGFloat = 5
+        let totalWidth = CGFloat(barCount) * barWidth + CGFloat(barCount - 1) * spacing
+        let startX = (bounds.width - totalWidth) / 2
+        let centerY = bounds.midY
+
+        NSColor.labelColor.setFill()
+        for index in 0..<barCount {
+            let distance = abs(CGFloat(index) - CGFloat(barCount - 1) / 2)
+            let centerWeight = 1 - distance / CGFloat(barCount)
+            let height: CGFloat
+            if reactive {
+                let flutter = 0.72 + 0.28 * sin(phase * 1.7 + CGFloat(index) * 1.25)
+                height = 5 + displayedLevel * 34 * centerWeight * flutter
+            } else {
+                // Quiet breathing motion communicates "ready" without implying speech.
+                let wave = (sin(phase + CGFloat(index) * 0.9) + 1) / 2
+                height = 7 + wave * 12 * centerWeight
+            }
+            let rect = NSRect(
+                x: startX + CGFloat(index) * (barWidth + spacing),
+                y: centerY - height / 2,
+                width: barWidth,
+                height: height
+            )
+            NSBezierPath(roundedRect: rect, xRadius: barWidth / 2, yRadius: barWidth / 2).fill()
+        }
+    }
+}
+
+/// Screen-global, visual-only dictation indicator. Never activates HyperVibe.
+private final class MicReadinessHUD {
+    private let panel: NSPanel
+    private let spinner = NSProgressIndicator()
+    private let waveform = AudioWaveformView()
+    private let iconView = NSImageView()
+    private var hideWorkItem: DispatchWorkItem?
+    private(set) var isVisible = false
+
+    init() {
+        panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 116, height: 62),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.level = .floating
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+
+        let content = NSView()
+        content.wantsLayer = true
+        content.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = content
+
+        for view in [spinner, waveform, iconView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(view)
+        }
+        spinner.style = .spinning
+        spinner.controlSize = .regular
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.contentTintColor = .labelColor
+
+        NSLayoutConstraint.activate([
+            spinner.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            spinner.widthAnchor.constraint(equalToConstant: 24),
+            spinner.heightAnchor.constraint(equalToConstant: 24),
+            waveform.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            waveform.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            waveform.widthAnchor.constraint(equalToConstant: 82),
+            waveform.heightAnchor.constraint(equalToConstant: 42),
+            iconView.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: content.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 26),
+            iconView.heightAnchor.constraint(equalToConstant: 26),
+        ])
+    }
+
+    func showWaveform(reactive: Bool) {
+        prepareToShow()
+        spinner.stopAnimation(nil)
+        spinner.isHidden = true
+        iconView.isHidden = true
+        waveform.isHidden = false
+        waveform.start(reactive: reactive)
+        waveform.setReactive(reactive)
+    }
+
+    func updateAudioLevel(_ level: Float) {
+        waveform.setLevel(level)
+    }
+
+    func showSpinner() {
+        prepareToShow()
+        waveform.stop()
+        waveform.isHidden = true
+        iconView.isHidden = true
+        spinner.isHidden = false
+        spinner.startAnimation(nil)
+    }
+
+    func showErrorBriefly(duration: TimeInterval = 1.2) {
+        prepareToShow()
+        waveform.stop()
+        waveform.isHidden = true
+        spinner.stopAnimation(nil)
+        spinner.isHidden = true
+        iconView.isHidden = false
+        iconView.image = NSImage(
+            systemSymbolName: "exclamationmark.triangle.fill",
+            accessibilityDescription: "Microphone unavailable"
+        )
+        let work = DispatchWorkItem { [weak self] in self?.hide() }
+        hideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: work)
+    }
+
+    func hide() {
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
+        spinner.stopAnimation(nil)
+        waveform.stop()
+        panel.orderOut(nil)
+        isVisible = false
+    }
+
+    private func prepareToShow() {
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
+        positionOnActiveScreen()
+        panel.orderFrontRegardless()
+        isVisible = true
+    }
+
+    private func positionOnActiveScreen() {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let visible = screen?.visibleFrame else {
+            panel.center()
+            return
+        }
+        let size = panel.frame.size
+        panel.setFrameOrigin(NSPoint(
+            x: visible.midX - size.width / 2,
+            y: visible.minY + max(72, visible.height * 0.12)
+        ))
+    }
+}
+
 class MenuBarManager: NSObject, NSMenuDelegate {
     private static let trackpadControlEnabledDefaultsKey = "trackpadControlEnabled"
     private enum MenuTag {
@@ -241,6 +474,8 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let menu: NSMenu
     private let statusMenuItem: NSMenuItem
+    private let micReadinessHUD = MicReadinessHUD()
+    private let statusSpinner = NSProgressIndicator()
     private var remoteConnected = false
     private var menuIsOpen = false
     private var rebuildAfterMenuCloses = false
@@ -423,6 +658,18 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         
         button.image = Self.makeWaveIcon()
         button.title = ""
+
+        statusSpinner.style = .spinning
+        statusSpinner.controlSize = .small
+        statusSpinner.isDisplayedWhenStopped = false
+        statusSpinner.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(statusSpinner)
+        NSLayoutConstraint.activate([
+            statusSpinner.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+            statusSpinner.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            statusSpinner.widthAnchor.constraint(equalToConstant: 16),
+            statusSpinner.heightAnchor.constraint(equalToConstant: 16),
+        ])
         
         menu.delegate = self
         rebuildMenu()
@@ -536,7 +783,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         menu.addItem(engineItem)
 
         // One-shot install only — once ready, no status line (noise).
-        if !HCIHelperClient.isReady() {
+        if !HCIHelperClient.isReadyCached() {
             let helperItem = NSMenuItem(
                 title: "安装麦克风组件（一次性）…",
                 action: #selector(installOrManageHCIHelper(_:)),
@@ -645,22 +892,77 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.remoteMicEnabled = enabled
-            // Parent engine row already shows the selected engine; only refresh when
-            // listening/download state should update that title.
-            if let engineItem = self.menu.items.first(where: { $0.tag == MenuTag.engineSubmenu }) {
-                engineItem.title = self.engineMenuTitle(listening: statusText.contains("采集中")
-                    || statusText.contains("正在听写"))
-            }
+            // Live dictation state is shown by the global HUD, not in this menu row.
+            _ = statusText
             _ = sinkName
         }
     }
 
-    private func engineMenuTitle(listening: Bool = false) -> String {
+    func updateMicReadiness(_ state: MicReadinessPresentationState) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.applyStatusIcon(for: state)
+
+            // Global floating HUD — visible without opening the menu.
+            switch state {
+            case .warming(let showHUD):
+                if showHUD {
+                    self.micReadinessHUD.showSpinner()
+                } else if self.micReadinessHUD.isVisible {
+                    self.micReadinessHUD.showSpinner()
+                }
+            case .readyToSpeak:
+                self.micReadinessHUD.showWaveform(reactive: false)
+            case .listening:
+                self.micReadinessHUD.showWaveform(reactive: true)
+            case .recognizing:
+                self.micReadinessHUD.showSpinner()
+            case .releasedBeforeReady:
+                self.micReadinessHUD.showErrorBriefly()
+            case .error:
+                self.micReadinessHUD.showErrorBriefly(duration: 2.0)
+            case .ready, .unavailable:
+                self.micReadinessHUD.hide()
+            }
+        }
+    }
+
+    func updateMicAudioLevel(_ level: Float) {
+        DispatchQueue.main.async { [weak self] in
+            self?.micReadinessHUD.updateAudioLevel(level)
+        }
+    }
+
+    private func applyStatusIcon(for state: MicReadinessPresentationState) {
+        guard let button = statusItem.button else { return }
+        switch state {
+        case .warming, .recognizing:
+            button.image = nil
+            statusSpinner.startAnimation(nil)
+        case .readyToSpeak:
+            statusSpinner.stopAnimation(nil)
+            button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Ready")
+                ?? Self.makeWaveIcon()
+        case .listening:
+            statusSpinner.stopAnimation(nil)
+            button.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Listening")
+                ?? Self.makeWaveIcon()
+        case .error, .releasedBeforeReady:
+            statusSpinner.stopAnimation(nil)
+            button.image = NSImage(
+                systemSymbolName: "exclamationmark.triangle",
+                accessibilityDescription: "麦克风未就绪"
+            ) ?? Self.makeWaveIcon()
+        default:
+            statusSpinner.stopAnimation(nil)
+            button.image = Self.makeWaveIcon()
+        }
+        button.appearsDisabled = !remoteConnected
+    }
+
+    private func engineMenuTitle() -> String {
         if case .downloading(let p) = transcriptionEngineStatus, selectedTranscriptionEngine == .parakeet {
             return String(format: "%@（下载中 %.0f%%）", selectedTranscriptionEngine.displayName, p * 100)
-        }
-        if listening {
-            return "\(selectedTranscriptionEngine.displayName) — 聆听中"
         }
         return selectedTranscriptionEngine.displayName
     }

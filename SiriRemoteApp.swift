@@ -19,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var mediaKeyInterceptor: MediaKeyInterceptor?
     private var touchHandler: TouchHandler?
     private var remoteMicController: RemoteMicController?
+    private var micWakeObserver: NSObjectProtocol?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("🚀 HyperVibe starting...")
@@ -67,6 +68,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         touchInputHandler.start()
         remoteInputHandler?.onButtonActivity = { [weak self] in
             self?.touchHandler?.tryReconnectTrackpad()
+            self?.remoteMicController?.ensureCaptureWarm()
         }
 
         // A2854 remote mic → PacketLogger HCI → Opus → selectable transcription engine.
@@ -74,12 +76,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let mic = RemoteMicController()
         remoteMicController = mic
         let ensureDictation: () -> Void = { [weak self, weak mic] in
-            guard let self, let mic else { return }
-            if !HCIHelperClient.isReady() { return }
-            guard RemoteMicLab.evaluate().isReady else { return }
-            mic.setEnabled(true)
-            self.menuBarManager.remoteMicEnabled = true
-            mic.attachSeizedDevices(self.remoteInputHandler?.seizedDevices ?? [])
+            // Helper ping + system_profiler can block for seconds — never on main.
+            DispatchQueue.global(qos: .userInitiated).async {
+                let helperReady = HCIHelperClient.isReady()
+                let labReady = helperReady && RemoteMicLab.evaluate().isReady
+                DispatchQueue.main.async {
+                    guard let self, let mic, labReady else { return }
+                    mic.setEnabled(true)
+                    self.menuBarManager.remoteMicEnabled = true
+                    mic.attachSeizedDevices(self.remoteInputHandler?.seizedDevices ?? [])
+                    mic.startIdleCaptureIfEnabled()
+                }
+            }
         }
         menuBarManager.onEnsureDictationEnabled = ensureDictation
         menuBarManager.onTranscriptionEngineChange = { [weak mic] id in
@@ -113,6 +121,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 sinkName: deviceName
             )
         }
+        mic.onReadinessState = { [weak menuBarManager] state in
+            menuBarManager?.updateMicReadiness(state)
+        }
+        mic.onAudioLevel = { [weak menuBarManager] level in
+            menuBarManager?.updateMicAudioLevel(level)
+        }
         mic.onEngineState = { [weak menuBarManager] id, state in
             menuBarManager?.updateTranscriptionEngine(id: id, state: state)
         }
@@ -123,8 +137,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             mic?.handleSiri(pressed: pressed) ?? false
         }
         ensureDictation()
-        mic.startIdleCaptureIfEnabled()
-        
+        // Warm capture starts from ensureDictation once helper readiness is known off-main.
         // Start remote detection
         remoteDetector = RemoteDetector { [weak self] device in
             DispatchQueue.main.async {
@@ -133,10 +146,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if let devices = self?.remoteInputHandler?.seizedDevices {
                     self?.remoteMicController?.attachSeizedDevices(devices)
                 }
+                if device != nil {
+                    // Remote may connect after launch; warm capture immediately instead
+                    // of waiting for the first Siri press.
+                    ensureDictation()
+                    self?.remoteMicController?.ensureCaptureWarm()
+                }
             }
         }
         remoteDetector?.startDetection()
         menuBarManager.requestMenuRebuild()
+
+        micWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak mic] _ in
+            mic?.ensureCaptureWarm()
+        }
         
         // Request Input Monitoring so media key tap works in both CLI and .app
         if #available(macOS 10.15, *) {
@@ -168,6 +195,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func cleanup() {
+        if let observer = micWakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            micWakeObserver = nil
+        }
         remoteMicController?.shutdown()
         remoteInputHandler?.releaseAllHeldKeys()
         touchHandler?.stop()

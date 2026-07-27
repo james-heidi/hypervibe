@@ -29,12 +29,41 @@ enum HCIHelperClient {
         }
     }
 
+    private static let cacheLock = NSLock()
+    private static var cachedReady: Bool?
+    private static var cacheDate: Date?
+    private static let cacheTTL: TimeInterval = 2.0
+
     static func ping(timeout: TimeInterval = 1.0) -> Bool {
         (try? send(.ping, timeout: timeout)) == .pong
     }
 
     static func isReady() -> Bool {
-        HCIHelperPaths.isInstalled && ping()
+        let ready = HCIHelperPaths.isInstalled && ping()
+        cacheLock.lock()
+        cachedReady = ready
+        cacheDate = Date()
+        cacheLock.unlock()
+        return ready
+    }
+
+    /// Fast path for menu rebuilds — avoids a blocking socket round-trip every open.
+    static func isReadyCached() -> Bool {
+        cacheLock.lock()
+        if let ready = cachedReady, let date = cacheDate,
+           Date().timeIntervalSince(date) < cacheTTL {
+            cacheLock.unlock()
+            return ready
+        }
+        cacheLock.unlock()
+        return isReady()
+    }
+
+    static func invalidateReadyCache() {
+        cacheLock.lock()
+        cachedReady = nil
+        cacheDate = nil
+        cacheLock.unlock()
     }
 
     @discardableResult
@@ -114,24 +143,26 @@ enum HCIHelperClient {
     }
 
     /// One-time admin install of the LaunchDaemon helper. Returns true on success.
+    /// Script is piped via base64 on stdin to avoid TOCTOU on a user-writable temp file.
     @discardableResult
     static func installWithAdminPrompt(bundledHelperURL: URL) -> Bool {
-        let scriptURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("hypervibe-install-hcihelper-\(UUID().uuidString).sh")
         let script = HCIHelperInstall.makeInstallScript(helperSourcePath: bundledHelperURL.path)
-        do {
-            try Data(script.utf8).write(to: scriptURL, options: .atomic)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o700],
-                ofItemAtPath: scriptURL.path
-            )
-        } catch {
-            presentAlert(title: "无法准备安装脚本", message: error.localizedDescription)
-            return false
-        }
-        defer { try? FileManager.default.removeItem(at: scriptURL) }
+        guard let scriptData = script.data(using: .utf8) else { return false }
+        let b64 = scriptData.base64EncodedString()
+        // Privileged sh decodes and runs the script from a pipe — never a user-writable path.
+        let command = "echo \(ShellQuote.single(b64)) | /usr/bin/base64 -D | /bin/sh"
+        return runAdminShell(command, failureTitle: "安装麦克风组件失败")
+    }
 
-        let command = "/bin/sh \(ShellQuote.single(scriptURL.path))"
+    static func uninstallWithAdminPrompt() -> Bool {
+        let script = HCIHelperInstall.makeUninstallScript()
+        guard let scriptData = script.data(using: .utf8) else { return false }
+        let b64 = scriptData.base64EncodedString()
+        let command = "echo \(ShellQuote.single(b64)) | /usr/bin/base64 -D | /bin/sh"
+        return runAdminShell(command, failureTitle: nil)
+    }
+
+    private static func runAdminShell(_ command: String, failureTitle: String?) -> Bool {
         let escaped = command
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -146,7 +177,9 @@ enum HCIHelperClient {
             try proc.run()
             proc.waitUntilExit()
         } catch {
-            presentAlert(title: "安装失败", message: error.localizedDescription)
+            if let failureTitle {
+                presentAlert(title: failureTitle, message: error.localizedDescription)
+            }
             return false
         }
         let errText = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
@@ -155,53 +188,29 @@ enum HCIHelperClient {
                 || errText.localizedCaseInsensitiveContains("User cancelled") {
                 return false
             }
-            presentAlert(title: "安装麦克风组件失败", message: errText.isEmpty ? "exit \(proc.terminationStatus)" : errText)
+            if let failureTitle {
+                presentAlert(
+                    title: failureTitle,
+                    message: errText.isEmpty ? "exit \(proc.terminationStatus)" : errText
+                )
+            }
             return false
         }
 
-        // Give launchd a moment to create the socket.
-        for _ in 0..<20 {
-            if isReady() { return true }
-            Thread.sleep(forTimeInterval: 0.15)
-        }
-        presentAlert(
-            title: "麦克风组件已安装但尚未就绪",
-            message: "请稍候再试，或重新打开 HyperVibe。"
-        )
-        return isReady()
-    }
-
-    static func uninstallWithAdminPrompt() -> Bool {
-        let scriptURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("hypervibe-uninstall-hcihelper-\(UUID().uuidString).sh")
-        let script = HCIHelperInstall.makeUninstallScript()
-        do {
-            try Data(script.utf8).write(to: scriptURL, options: .atomic)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o700],
-                ofItemAtPath: scriptURL.path
+        if failureTitle != nil {
+            invalidateReadyCache()
+            for _ in 0..<20 {
+                if isReady() { return true }
+                Thread.sleep(forTimeInterval: 0.15)
+            }
+            presentAlert(
+                title: "麦克风组件已安装但尚未就绪",
+                message: "请稍候再试，或重新打开 HyperVibe。"
             )
-        } catch {
-            return false
+            return isReady()
         }
-        defer { try? FileManager.default.removeItem(at: scriptURL) }
-        let command = "/bin/sh \(ShellQuote.single(scriptURL.path))"
-        let escaped = command
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let appleScript = "do shell script \"\(escaped)\" with administrator privileges"
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        proc.arguments = ["-e", appleScript]
-        proc.standardOutput = Pipe()
-        proc.standardError = Pipe()
-        do {
-            try proc.run()
-            proc.waitUntilExit()
-            return proc.terminationStatus == 0
-        } catch {
-            return false
-        }
+        invalidateReadyCache()
+        return true
     }
 
     private static func presentAlert(title: String, message: String) {

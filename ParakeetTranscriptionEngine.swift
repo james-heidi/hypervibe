@@ -21,6 +21,7 @@ final class ParakeetTranscriptionEngine: TranscriptionEngine {
     private var sampleRate: Double = 48_000
     private var generation = UUID()
     private var asrManager: AsrManager?
+    private var recognitionTask: Task<Void, Never>?
     private var downloadTask: Task<Void, Never>?
     private var cancelDownload = false
     private var lastPublishedPercent = -1
@@ -76,7 +77,7 @@ final class ParakeetTranscriptionEngine: TranscriptionEngine {
                 }
                 let manager = AsrManager(config: .default)
                 try await manager.loadModels(models)
-                self.asrManager = manager
+                self.queue.sync { self.asrManager = manager }
                 self.publish(.ready)
                 DispatchQueue.main.async { completion?(true) }
             } catch {
@@ -128,8 +129,9 @@ final class ParakeetTranscriptionEngine: TranscriptionEngine {
 
     func finishUtterance(completion: @escaping (Result<String?, Error>) -> Void) {
         publish(.recognizing)
+        let opID = generation
         // Snapshot synchronously so a subsequent startUtterance cannot clear the buffer
-        // out from under an in-flight finish (was canceling transcripts on the next press).
+        // out from under an in-flight finish.
         let (pcm, rate): ([Int16], Int) = queue.sync {
             let captured = samples
             samples.removeAll(keepingCapacity: true)
@@ -153,22 +155,41 @@ final class ParakeetTranscriptionEngine: TranscriptionEngine {
             return
         }
 
-        Task {
+        recognitionTask?.cancel()
+        recognitionTask = Task { [weak self] in
+            guard let self else { return }
             defer { try? FileManager.default.removeItem(at: wav) }
             do {
                 try await self.ensureManagerLoadedAsync()
-                guard let manager = self.asrManager else {
+                try Task.checkCancellation()
+                guard self.generation == opID else {
+                    DispatchQueue.main.async { completion(.success(nil)) }
+                    return
+                }
+                let manager = self.queue.sync { () -> AsrManager? in self.asrManager }
+                guard let manager else {
                     throw TranscriptionEngineError.backend("Parakeet manager unavailable")
                 }
                 var decoderState = try TdtDecoderState(decoderLayers: await manager.decoderLayerCount)
                 let result = try await manager.transcribe(wav, decoderState: &decoderState)
+                try Task.checkCancellation()
+                guard self.generation == opID else {
+                    DispatchQueue.main.async { completion(.success(nil)) }
+                    return
+                }
                 let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 self.publish(.ready)
                 rmDebug("🎤 Parakeet result samples=\(pcm.count) text=\(text.isEmpty ? "<empty>" : text)")
                 DispatchQueue.main.async {
                     completion(.success(text.isEmpty ? nil : text))
                 }
+            } catch is CancellationError {
+                DispatchQueue.main.async { completion(.success(nil)) }
             } catch {
+                guard self.generation == opID else {
+                    DispatchQueue.main.async { completion(.success(nil)) }
+                    return
+                }
                 self.publish(.ready)
                 rmDebug("🎤 Parakeet error: \(error.localizedDescription)")
                 DispatchQueue.main.async {
@@ -180,6 +201,8 @@ final class ParakeetTranscriptionEngine: TranscriptionEngine {
 
     func cancel() {
         generation = UUID()
+        recognitionTask?.cancel()
+        recognitionTask = nil
         queue.async { [weak self] in
             self?.samples.removeAll(keepingCapacity: true)
         }
@@ -204,14 +227,15 @@ final class ParakeetTranscriptionEngine: TranscriptionEngine {
     }
 
     private func ensureManagerLoadedAsync() async throws {
-        if let asrManager, await asrManager.isAvailable { return }
+        let existing: AsrManager? = queue.sync { asrManager }
+        if let existing, await existing.isAvailable { return }
         let models = try await AsrModels.load(
             from: AsrModels.defaultCacheDirectory(for: modelVersion),
             version: modelVersion
         )
         let manager = AsrManager(config: .default)
         try await manager.loadModels(models)
-        asrManager = manager
+        queue.sync { asrManager = manager }
     }
 
     private func publish(_ state: TranscriptionEngineState) {

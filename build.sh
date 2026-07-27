@@ -45,13 +45,13 @@ if [[ -d /opt/homebrew/opt/opus/include && -f /opt/homebrew/opt/opus/lib/libopus
     OPUS_LIB=/opt/homebrew/opt/opus/lib
 fi
 
-# FluidAudio requires macOS 14+. Prefer host major version, floor at 14.
+# FluidAudio requires macOS 14+. Pin deployment target (do not follow host major).
 HOST_MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
 if [[ "$HOST_MAJOR" -lt 14 ]]; then
     echo "Error: Parakeet/FluidAudio requires macOS 14 or later (host is $HOST_MAJOR)."
     exit 1
 fi
-MACOSX_MIN="${MACOSX_MIN:-${HOST_MAJOR}.0}"
+MACOSX_MIN="${MACOSX_MIN:-14.0}"
 
 SDK_PATH=$(xcrun --show-sdk-path --sdk macosx 2>/dev/null || echo "")
 if [ -z "$SDK_PATH" ]; then
@@ -172,6 +172,7 @@ xcrun swiftc \
     -sdk "$SDK_PATH" \
     -target "${TARGETS[0]}" \
     -O \
+    -framework SystemConfiguration \
     -o "$HELPER_SLICE" \
     HyperVibeHCIHelperMain.swift \
     HCIHelperServer.swift \

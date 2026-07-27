@@ -52,6 +52,7 @@ xcrun swiftc \
     TranscriptionKeychain.swift \
     OpenAITranscriptionEngine.swift \
     ParakeetTranscriptionEngine.swift \
+    Tests/RMDebugStub.swift \
     -I "$FLUID_BIN/Modules" \
     -I "$FLUID_CHECKOUT/Sources/FastClusterWrapper/include" \
     -I "$FLUID_CHECKOUT/Sources/MachTaskSelfWrapper/include" \

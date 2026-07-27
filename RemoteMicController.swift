@@ -9,11 +9,34 @@
 import Foundation
 import AppKit
 
+enum MicReadinessPresentationState: Equatable {
+    case unavailable
+    case warming(showHUD: Bool)
+    case ready
+    case readyToSpeak
+    case listening
+    case recognizing
+    case releasedBeforeReady
+    case error(String)
+
+    var menuLabel: String {
+        switch self {
+        case .unavailable: return "麦克风：不可用"
+        case .warming: return "麦克风：准备中…"
+        case .ready: return "麦克风：就绪"
+        case .readyToSpeak: return "麦克风：请讲"
+        case .listening: return "麦克风：聆听中"
+        case .recognizing: return "麦克风：转写中…"
+        case .releasedBeforeReady: return "麦克风：尚未就绪"
+        case .error(let message): return "麦克风：\(message)"
+        }
+    }
+}
+
 /// End-to-end A2854 remote microphone path with zero extra hardware.
 final class RemoteMicController {
     private let activator = MicActivator()
     private let capture: MicCapturePipeline
-    private let hciTap = HCIEventTap()
     private let decoder: OpusVoiceDecoder?
     private let queue = DispatchQueue(label: "com.hypervibe.remote-mic")
 
@@ -35,10 +58,16 @@ final class RemoteMicController {
     private static let coldStartGrace: TimeInterval = 3.0
     private var utteranceBeganAt: Date?
     private var captureWasColdAtPress = false
+    private var utteranceReceivedFrame = false
     /// Avoid re-arm spam (SetReport storms cut the remote mic stream after ~1s).
     private var lastRearmStatus: MicCaptureStatus?
+    private var warmRetryAttempt = 0
+    private var warmRetryWorkItem: DispatchWorkItem?
+    private var lastAudioLevelPublishedAt: TimeInterval = 0
 
     var onStatus: ((MicCaptureStatus, String?) -> Void)?
+    var onReadinessState: ((MicReadinessPresentationState) -> Void)?
+    var onAudioLevel: ((Float) -> Void)?
     var onTranscribedText: ((String) -> Void)?
     var onEngineState: ((TranscriptionEngineID, TranscriptionEngineState) -> Void)?
 
@@ -57,14 +86,38 @@ final class RemoteMicController {
             self.onStatus?(status, nil)
             // After helper finishes bluetoothd restart, HID devices can reappear and
             // the earlier AF/PushToTalk poke is lost — re-arm once per phase while held.
-            switch status {
-            case .listening, .streaming:
-                if (self.acceptingAudio || self.siriHeld), self.lastRearmStatus != status {
-                    self.lastRearmStatus = status
-                    self.activator.rearmOnSiriDown()
+            self.queue.async {
+                switch status {
+                case .listening, .streaming:
+                    self.warmRetryAttempt = 0
+                    self.warmRetryWorkItem?.cancel()
+                    self.warmRetryWorkItem = nil
+                    if (self.acceptingAudio || self.siriHeld), self.lastRearmStatus != status {
+                        self.lastRearmStatus = status
+                        DispatchQueue.main.async { self.activator.rearmOnSiriDown() }
+                    }
+                    if self.siriHeld {
+                        self.publishReadiness(
+                            self.utteranceReceivedFrame ? .listening : .readyToSpeak
+                        )
+                    } else {
+                        self.publishReadiness(.ready)
+                    }
+                case .starting:
+                    self.publishReadiness(.warming(showHUD: self.siriHeld))
+                case .error(let message):
+                    self.lastRearmStatus = nil
+                    self.publishReadiness(.error(message))
+                    self.scheduleWarmRetryLocked()
+                case .missingTools(let detail):
+                    self.lastRearmStatus = nil
+                    self.publishReadiness(.error(detail))
+                    self.scheduleWarmRetryLocked()
+                case .idle:
+                    self.lastRearmStatus = nil
+                    self.publishReadiness(.unavailable)
+                    self.scheduleWarmRetryLocked()
                 }
-            default:
-                self.lastRearmStatus = nil
             }
         }
         capture.onPayload = { [weak self] payload in
@@ -90,9 +143,12 @@ final class RemoteMicController {
             engine.prepare(completion: nil)
             startIdleCaptureIfEnabled()
         } else {
+            queue.async {
+                self.warmRetryWorkItem?.cancel()
+                self.warmRetryWorkItem = nil
+            }
             stopSession(cancelRecognition: true)
             capture.stop()
-            hciTap.stop()
             activator.disarm()
         }
         publishStatus()
@@ -100,7 +156,9 @@ final class RemoteMicController {
 
     func setEngine(_ id: TranscriptionEngineID) {
         guard id != engineID else { return }
-        engine.cancel()
+        let old = engine
+        old.onState = nil
+        old.cancel()
         engineID = id
         TranscriptionEngineID.current = id
         engine = TranscriptionEngineFactory.make(id)
@@ -141,14 +199,22 @@ final class RemoteMicController {
             return
         }
         engine.prepare(completion: nil)
-        hciTap.start()
-        if HCIHelperClient.isReady() {
-            switch capture.status {
-            case .idle, .error, .missingTools:
-                capture.start()
-            default:
-                break
-            }
+        ensureCaptureWarm()
+    }
+
+    /// Idempotent lifecycle hook for remote connect, wake, and button activity.
+    func ensureCaptureWarm() {
+        guard enabled else { return }
+        // `capture.start()` performs helper readiness checks on its own serial queue.
+        // Avoid synchronous helper IPC on the main thread.
+        switch capture.status {
+        case .idle, .error, .missingTools:
+            publishReadiness(.warming(showHUD: false))
+            capture.start()
+        case .starting:
+            publishReadiness(.warming(showHUD: false))
+        case .listening, .streaming:
+            publishReadiness(.ready)
         }
         publishStatus()
     }
@@ -156,16 +222,15 @@ final class RemoteMicController {
     func attachSeizedDevices(_ devices: [IOHIDDevice]) {
         guard enabled, !devices.isEmpty else { return }
         activator.useSharedDevices(devices)
-        // If Siri is already held when devices reappear (bluetoothd bounce), re-arm now.
-        if acceptingAudio || siriHeld {
-            activator.rearmOnSiriDown()
+        queue.async { [weak self] in
+            guard let self, self.acceptingAudio || self.siriHeld else { return }
+            DispatchQueue.main.async { self.activator.rearmOnSiriDown() }
         }
     }
 
     func shutdown() {
         stopSession(cancelRecognition: true)
         capture.stop()
-        hciTap.stop()
         activator.disarm()
     }
 
@@ -173,19 +238,21 @@ final class RemoteMicController {
     func handleSiri(pressed: Bool) -> Bool {
         guard enabled else { return false }
         if pressed {
-            // If we were draining a prior hold, commit it BEFORE startUtterance clears PCM.
-            let wasDraining = finishWorkItem != nil
-            finishWorkItem?.cancel()
-            finishWorkItem = nil
-            if wasDraining {
-                queue.sync { [weak self] in
-                    guard let self, self.acceptingAudio else { return }
+            // Commit any draining utterance BEFORE startUtterance clears PCM.
+            // finishUtterance snapshots synchronously; do not defer that hop to main.
+            queue.sync {
+                if let work = self.finishWorkItem {
+                    work.cancel()
+                    self.finishWorkItem = nil
+                }
+                if self.acceptingAudio && !self.siriHeld {
                     self.commitUtteranceLocked()
                 }
             }
             guard !siriHeld else { return true }
             siriHeld = true
             lastRearmStatus = nil
+            utteranceReceivedFrame = false
             guard engine.startUtterance() else {
                 siriHeld = false
                 queue.async { self.acceptingAudio = false }
@@ -207,6 +274,8 @@ final class RemoteMicController {
                 coldStart = false
             }
             captureWasColdAtPress = coldStart
+            // Always surface the HUD while Siri is held — that is the global cue.
+            publishReadiness(coldStart ? .warming(showHUD: true) : .readyToSpeak)
             queue.async {
                 self.acceptingAudio = true
                 self.wavSamples.removeAll(keepingCapacity: true)
@@ -220,11 +289,20 @@ final class RemoteMicController {
             rmDebug("🎤 Siri down — mic armed engine=\(engineID.rawValue) coldStart=\(coldStart)")
         } else if siriHeld {
             siriHeld = false
+            if captureWasColdAtPress && !utteranceReceivedFrame {
+                switch capture.status {
+                case .idle, .starting, .missingTools, .error:
+                    publishReadiness(.releasedBeforeReady)
+                default:
+                    publishReadiness(.recognizing)
+                }
+            } else {
+                publishReadiness(.recognizing)
+            }
             // Keep PushToTalk armed during drain so trailing HCI frames still arrive.
             let drain: TimeInterval
             if captureWasColdAtPress {
                 let elapsed = utteranceBeganAt.map { Date().timeIntervalSince($0) } ?? 0
-                // Helper bluetoothd restart alone takes ~2s before PacketLogger streams.
                 drain = max(Self.postReleaseDrain, Self.coldStartGrace - elapsed)
             } else {
                 drain = Self.postReleaseDrain
@@ -234,7 +312,9 @@ final class RemoteMicController {
             let work = DispatchWorkItem { [weak self] in
                 self?.finishHeldUtterance()
             }
-            finishWorkItem = work
+            queue.sync {
+                self.finishWorkItem = work
+            }
             queue.asyncAfter(deadline: .now() + drain, execute: work)
         }
         publishStatus()
@@ -242,40 +322,46 @@ final class RemoteMicController {
     }
 
     private func finishHeldUtterance() {
-        // Runs on `queue` so acceptingAudio / wavSamples stay consistent with payloads.
+        // Runs on `queue`.
         finishWorkItem = nil
-        activator.disarm()
+        DispatchQueue.main.async { self.activator.disarm() }
         commitUtteranceLocked()
     }
 
+    /// Snapshots engine PCM immediately (finishUtterance's first action is sync).
+    /// Must be called before a subsequent startUtterance.
     private func commitUtteranceLocked() {
         acceptingAudio = false
         let debugSamples = wavSamples
         wavSamples.removeAll(keepingCapacity: true)
         rmDebug("🎤 recognition finishing frames=\(capture.framesSeen) debugSamples=\(debugSamples.count)")
+        let engineRef = engine
+        // Snapshot happens synchronously inside finishUtterance before any await.
+        engineRef.finishUtterance { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let text):
+                if let text, !text.isEmpty {
+                    rmDebug("🎤 typed transcript len=\(text.count)")
+                    self.onTranscribedText?(text)
+                } else {
+                    rmDebug("🎤 transcript empty — no typing")
+                }
+                self.publishReadiness(.ready)
+            case .failure(let error):
+                if let te = error as? TranscriptionEngineError, case .emptyAudio = te {
+                    rmDebug("🎤 empty utterance ignored")
+                    self.publishReadiness(.ready)
+                } else {
+                    self.publishReadiness(.error(error.localizedDescription))
+                    self.presentTranscriptionFailure(error)
+                }
+            }
+            self.publishStatus()
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.decoder?.reset()
-            self.engine.finishUtterance { [weak self] result in
-                guard let self else { return }
-                switch result {
-                case .success(let text):
-                    if let text, !text.isEmpty {
-                        rmDebug("🎤 typed transcript len=\(text.count)")
-                        self.onTranscribedText?(text)
-                    } else {
-                        rmDebug("🎤 transcript empty — no typing")
-                    }
-                case .failure(let error):
-                    // Accidental taps / cold-start races produce empty audio — not a real failure.
-                    if let te = error as? TranscriptionEngineError, case .emptyAudio = te {
-                        rmDebug("🎤 empty utterance ignored")
-                    } else {
-                        self.presentTranscriptionFailure(error)
-                    }
-                }
-                self.publishStatus()
-            }
             if !debugSamples.isEmpty {
                 self.writeDebugWAV(samples: debugSamples)
             }
@@ -284,9 +370,10 @@ final class RemoteMicController {
     }
 
     private func bindEngineCallbacks() {
+        let boundID = engineID
         engine.onState = { [weak self] state in
-            guard let self else { return }
-            self.onEngineState?(self.engineID, state)
+            guard let self, self.engineID == boundID else { return }
+            self.onEngineState?(boundID, state)
             self.publishStatus()
         }
     }
@@ -297,6 +384,32 @@ final class RemoteMicController {
             guard let decoder = self.decoder else { return }
             let pcm = decoder.feed(payload)
             guard !pcm.isEmpty else { return }
+            if !self.utteranceReceivedFrame {
+                self.utteranceReceivedFrame = true
+                let latency = self.utteranceBeganAt.map { Date().timeIntervalSince($0) } ?? 0
+                rmDebug(String(
+                    format: "🎤 utterance first frame latency=%.3fs cold=%@",
+                    latency,
+                    self.captureWasColdAtPress ? "yes" : "no"
+                ))
+                self.publishReadiness(.listening)
+            }
+            let now = Date.timeIntervalSinceReferenceDate
+            if now - self.lastAudioLevelPublishedAt >= 1.0 / 30.0 {
+                self.lastAudioLevelPublishedAt = now
+                var sumSquares = 0.0
+                var count = 0
+                for index in stride(from: 0, to: pcm.count, by: 8) {
+                    let value = Double(pcm[index]) / 32768.0
+                    sumSquares += value * value
+                    count += 1
+                }
+                if count > 0 {
+                    let rms = sqrt(sumSquares / Double(count))
+                    let normalized = Float(min(1, max(0, (rms - 0.003) * 18)))
+                    self.onAudioLevel?(normalized)
+                }
+            }
             self.engine.append(pcmS16: pcm, sampleRate: Double(OpusVoiceDecoder.sampleRate))
             if self.wavSamples.count < 48_000 * 30 {
                 self.wavSamples.append(contentsOf: pcm)
@@ -305,10 +418,14 @@ final class RemoteMicController {
     }
 
     private func stopSession(cancelRecognition: Bool) {
-        finishWorkItem?.cancel()
-        finishWorkItem = nil
-        siriHeld = false
-        queue.async { self.acceptingAudio = false }
+        queue.sync {
+            self.finishWorkItem?.cancel()
+            self.finishWorkItem = nil
+            self.warmRetryWorkItem?.cancel()
+            self.warmRetryWorkItem = nil
+            self.acceptingAudio = false
+            self.siriHeld = false
+        }
         activator.disarm()
         if cancelRecognition {
             engine.cancel()
@@ -325,6 +442,28 @@ final class RemoteMicController {
 
     private func publishStatus() {
         onStatus?(enabled ? capture.status : .idle, nil)
+    }
+
+    private func publishReadiness(_ state: MicReadinessPresentationState) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onReadinessState?(state)
+        }
+    }
+
+    private func scheduleWarmRetryLocked() {
+        guard enabled, warmRetryWorkItem == nil else { return }
+        warmRetryAttempt = min(warmRetryAttempt + 1, 5)
+        let delay = min(pow(2.0, Double(warmRetryAttempt - 1)), 16.0)
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.queue.async {
+                self.warmRetryWorkItem = nil
+            }
+            self.startIdleCaptureIfEnabled()
+        }
+        warmRetryWorkItem = work
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay, execute: work)
+        rmDebug(String(format: "🎤 warm capture retry in %.1fs", delay))
     }
 
     private func presentEngineSetupAlert(_ reason: String) {

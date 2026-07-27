@@ -18,6 +18,7 @@ final class OpenAITranscriptionEngine: TranscriptionEngine {
     private var sampleRate: Double = 48_000
     private var generation = UUID()
     private var session: URLSession
+    private var uploadTask: URLSessionUploadTask?
 
     /// Injectable for tests.
     var transport: ((URLRequest, Data) throws -> (HTTPURLResponse, Data))?
@@ -63,6 +64,7 @@ final class OpenAITranscriptionEngine: TranscriptionEngine {
 
     func finishUtterance(completion: @escaping (Result<String?, Error>) -> Void) {
         publish(.recognizing)
+        let opID = generation
         // Snapshot synchronously so a subsequent startUtterance cannot wipe in-flight audio.
         let (pcm, rate): ([Int16], Int) = queue.sync {
             let captured = samples
@@ -78,11 +80,19 @@ final class OpenAITranscriptionEngine: TranscriptionEngine {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             do {
-                let text = try self.transcribe(samples: pcm, sampleRate: rate)
+                let text = try self.transcribe(samples: pcm, sampleRate: rate, opID: opID)
+                guard self.generation == opID else {
+                    DispatchQueue.main.async { completion(.success(nil)) }
+                    return
+                }
                 self.publish(.ready)
                 rmDebug("🎤 OpenAI result samples=\(pcm.count) text=\(text ?? "<empty>")")
                 DispatchQueue.main.async { completion(.success(text)) }
             } catch {
+                guard self.generation == opID else {
+                    DispatchQueue.main.async { completion(.success(nil)) }
+                    return
+                }
                 self.publish(.ready)
                 rmDebug("🎤 OpenAI error: \(error.localizedDescription)")
                 DispatchQueue.main.async { completion(.failure(error)) }
@@ -92,6 +102,8 @@ final class OpenAITranscriptionEngine: TranscriptionEngine {
 
     func cancel() {
         generation = UUID()
+        uploadTask?.cancel()
+        uploadTask = nil
         queue.async { [weak self] in
             self?.samples.removeAll(keepingCapacity: true)
         }
@@ -127,15 +139,16 @@ final class OpenAITranscriptionEngine: TranscriptionEngine {
     static func parseTranscriptJSON(_ data: Data) throws -> String {
         struct Response: Decodable { let text: String? }
         if let decoded = try? JSONDecoder().decode(Response.self, from: data),
-           let text = decoded.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !text.isEmpty {
-            return text
+           let text = decoded.text {
+            // A valid empty transcript means no speech; it is not a backend error.
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         let raw = String(data: data, encoding: .utf8) ?? ""
         throw TranscriptionEngineError.backend("OpenAI response missing text: \(raw.prefix(200))")
     }
 
-    private func transcribe(samples: [Int16], sampleRate: Int) throws -> String? {
+    private func transcribe(samples: [Int16], sampleRate: Int, opID: UUID) throws -> String? {
+        guard generation == opID else { return nil }
         guard let apiKey = TranscriptionKeychain.loadOpenAIKey() else {
             throw TranscriptionEngineError.missingAPIKey
         }
@@ -165,12 +178,18 @@ final class OpenAITranscriptionEngine: TranscriptionEngine {
         } else {
             let semaphore = DispatchSemaphore(value: 0)
             var captured: (Data?, URLResponse?, Error?)
-            session.uploadTask(with: request, from: body) { data, response, error in
+            let task = session.uploadTask(with: request, from: body) { data, response, error in
                 captured = (data, response, error)
                 semaphore.signal()
-            }.resume()
+            }
+            uploadTask = task
+            task.resume()
             semaphore.wait()
+            uploadTask = nil
             if let error = captured.2 {
+                if (error as NSError).code == NSURLErrorCancelled {
+                    return nil
+                }
                 throw TranscriptionEngineError.network(error.localizedDescription)
             }
             guard let data = captured.0,
@@ -181,6 +200,7 @@ final class OpenAITranscriptionEngine: TranscriptionEngine {
             responseData = data
         }
 
+        guard generation == opID else { return nil }
         guard (200..<300).contains(http.statusCode) else {
             let message = String(data: responseData, encoding: .utf8) ?? "HTTP \(http.statusCode)"
             throw TranscriptionEngineError.network("OpenAI \(http.statusCode): \(message.prefix(240))")

@@ -20,8 +20,9 @@ final class HCIEventTap: NSObject {
     var onRawBytes: ((Data) -> Void)?
 
     /// How many bytes to copy from the opaque notification pointer.
-    /// Oversized relative to typical HCI events so Spike A can search for Opus TOC.
-    private let dumpLength = 512
+    /// Keep small — the IOBluetoothHCIEventNotificationMessage allocation is only
+    /// tens of bytes; a 512-byte dump was an out-of-bounds read.
+    private let dumpLength = 64
 
     func start() {
         let c = IOBluetoothHostController.default()

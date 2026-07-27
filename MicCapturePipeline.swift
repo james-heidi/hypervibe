@@ -211,49 +211,32 @@ final class MicCapturePipeline {
     /// Starts PacketLogger through the one-shot installed LaunchDaemon helper.
     /// Admin password is only required when installing that helper, not per capture.
     private func startHelperCapture(logger: URL) {
-        let fm = FileManager.default
-        let directory = fm.temporaryDirectory
-            .appendingPathComponent("hypervibe-hci-\(UUID().uuidString)", isDirectory: true)
-        let output = directory.appendingPathComponent("capture.nhdr")
-        let token = directory.appendingPathComponent("capture.alive")
-
-        do {
-            try fm.createDirectory(at: directory, withIntermediateDirectories: false)
-            try Data().write(to: output, options: .atomic)
-            try Data("alive".utf8).write(to: token, options: .atomic)
-            try fm.setAttributes([.posixPermissions: 0o666], ofItemAtPath: output.path)
-            try fm.setAttributes([.posixPermissions: 0o666], ofItemAtPath: token.path)
-        } catch {
-            status = .error("cannot prepare capture: \(error.localizedDescription)")
-            try? fm.removeItem(at: directory)
+        guard HCIHelperPathValidation.isAllowedPacketLoggerPath(logger.path) else {
+            status = .error("packetlogger path rejected")
+            rmDebug("🎤 packetlogger path rejected: \(logger.path)")
             return
         }
 
-        captureDirectory = directory
-        captureOutputURL = output
-        captureTokenURL = token
+        captureDirectory = nil
+        captureOutputURL = nil
+        captureTokenURL = nil
         captureReadOffset = 0
 
-        // Stale packetlogger instances (from prior helper crashes) compete for HCI
-        // and truncate voice streams to ~1s. Clear them before asking the helper.
-        let killOrphans = Process()
-        killOrphans.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        killOrphans.arguments = ["-9", "packetlogger"]
-        killOrphans.standardOutput = Pipe()
-        killOrphans.standardError = Pipe()
-        try? killOrphans.run()
-        killOrphans.waitUntilExit()
-
         do {
-            _ = try HCIHelperClient.send(
+            let response = try HCIHelperClient.send(
                 .start(
                     packetLoggerPath: logger.path,
-                    outputPath: output.path,
-                    tokenPath: token.path,
                     parentPID: getpid()
                 ),
                 timeout: 12
             )
+            guard case let .started(outputPath, tokenPath) = response else {
+                status = .error("helper did not return session paths")
+                return
+            }
+            captureOutputURL = URL(fileURLWithPath: outputPath)
+            captureTokenURL = URL(fileURLWithPath: tokenPath)
+            captureDirectory = captureOutputURL?.deletingLastPathComponent()
         } catch {
             status = .error(error.localizedDescription)
             removeCaptureDirectory()
@@ -270,14 +253,23 @@ final class MicCapturePipeline {
         fileReadTimer = timer
         timer.resume()
 
-        // Poll helper status so a daemon-side stop clears local state.
-        let watch = DispatchSource.makeTimerSource(queue: queue)
+        // Poll helper status off the capture queue so a slow ping cannot stall audio reads.
+        let statusQueue = DispatchQueue(label: "com.hypervibe.mic-capture.status")
+        let watch = DispatchSource.makeTimerSource(queue: statusQueue)
         watch.schedule(deadline: .now() + 1.0, repeating: 1.0)
         watch.setEventHandler { [weak self] in
-            guard let self, self.helperSessionActive else { return }
+            guard let self else { return }
+            self.queue.async {
+                guard self.helperSessionActive else { return }
+            }
             if case .status(let value) = try? HCIHelperClient.send(.status, timeout: 1.0),
                value == "idle" {
-                self.finishHelperSession(restartIfNeeded: true)
+                self.queue.async {
+                    // Unexpected helper exit must self-heal; otherwise the next Siri
+                    // press is forced through a cold start.
+                    self.restartAfterTeardown = true
+                    self.finishHelperSession(restartIfNeeded: true)
+                }
             }
         }
         helperWatchTimer = watch
@@ -335,6 +327,19 @@ final class MicCapturePipeline {
         helperWatchTimer = nil
     }
 
+    private func removeCaptureDirectory() {
+        // Helper owns the session directory under /var/tmp; only drop the liveness token.
+        if let token = captureTokenURL {
+            try? FileManager.default.removeItem(at: token)
+        }
+        captureDirectory = nil
+        captureOutputURL = nil
+        captureTokenURL = nil
+        captureReadOffset = 0
+    }
+
+    private static let captureRotateBytes: UInt64 = 32 * 1024 * 1024
+
     private func readPrivilegedOutput() {
         guard let output = captureOutputURL,
               let handle = try? FileHandle(forReadingFrom: output) else { return }
@@ -342,7 +347,19 @@ final class MicCapturePipeline {
         do {
             try handle.seek(toOffset: captureReadOffset)
             let chunk = try handle.readToEnd() ?? Data()
-            guard !chunk.isEmpty else { return }
+            guard !chunk.isEmpty else {
+                // Rotate long-lived warm sessions before capture.nhdr grows without bound.
+                if captureReadOffset > Self.captureRotateBytes {
+                    rmDebug("🎤 rotating capture after \(captureReadOffset) bytes")
+                    restartAfterTeardown = true
+                    if let token = captureTokenURL {
+                        try? FileManager.default.removeItem(at: token)
+                    }
+                    _ = try? HCIHelperClient.send(.stop, timeout: 5)
+                    finishHelperSession(restartIfNeeded: true)
+                }
+                return
+            }
             captureReadOffset += UInt64(chunk.count)
             if status == .starting {
                 status = .listening
@@ -352,16 +369,6 @@ final class MicCapturePipeline {
         } catch {
             rmDebug("🎤 capture tail read failed: \(error)")
         }
-    }
-
-    private func removeCaptureDirectory() {
-        if let directory = captureDirectory {
-            try? FileManager.default.removeItem(at: directory)
-        }
-        captureDirectory = nil
-        captureOutputURL = nil
-        captureTokenURL = nil
-        captureReadOffset = 0
     }
 
     private func readAvailable(from handle: FileHandle) {

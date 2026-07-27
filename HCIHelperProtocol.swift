@@ -13,6 +13,8 @@ enum HCIHelperPaths {
     static let helperBinary = "/Library/PrivilegedHelperTools/com.hypervibe.hcihelper"
     static let launchdPlist = "/Library/LaunchDaemons/com.hypervibe.hcihelper.plist"
     static let socketPath = "/var/run/com.hypervibe.hci.sock"
+    /// Root-owned session root; helper creates per-capture subdirs here.
+    static let sessionRoot = "/var/tmp/com.hypervibe.hci"
     static let bundledHelperRelativePath = "Helpers/com.hypervibe.hcihelper"
 
     static var isInstalled: Bool {
@@ -35,13 +37,17 @@ enum HCIHelperRequest: Equatable {
     case ping
     case status
     case stop
-    case start(packetLoggerPath: String, outputPath: String, tokenPath: String, parentPID: Int32)
+    /// Client supplies only PacketLogger path + parent PID. Session paths are
+    /// created by the helper under `HCIHelperPaths.sessionRoot`.
+    case start(packetLoggerPath: String, parentPID: Int32)
 }
 
 enum HCIHelperResponse: Equatable {
     case ok
     case pong
     case status(String)
+    /// Successful START — client tails `outputPath` and may delete `tokenPath` to stop.
+    case started(outputPath: String, tokenPath: String)
     case error(String)
 }
 
@@ -54,12 +60,10 @@ enum HCIHelperCodec {
             return "STATUS\n"
         case .stop:
             return "STOP\n"
-        case let .start(packetLoggerPath, outputPath, tokenPath, parentPID):
+        case let .start(packetLoggerPath, parentPID):
             let fields = [
                 "START",
                 escape(packetLoggerPath),
-                escape(outputPath),
-                escape(tokenPath),
                 String(parentPID),
             ]
             return fields.joined(separator: "|") + "\n"
@@ -73,11 +77,9 @@ enum HCIHelperCodec {
         if trimmed == "STOP" { return .stop }
         guard trimmed.hasPrefix("START|") else { return nil }
         let parts = splitFields(trimmed)
-        guard parts.count == 5, parts[0] == "START", let pid = Int32(parts[4]) else { return nil }
+        guard parts.count == 3, parts[0] == "START", let pid = Int32(parts[2]) else { return nil }
         return .start(
             packetLoggerPath: unescape(parts[1]),
-            outputPath: unescape(parts[2]),
-            tokenPath: unescape(parts[3]),
             parentPID: pid
         )
     }
@@ -90,6 +92,8 @@ enum HCIHelperCodec {
             return "PONG\n"
         case .status(let value):
             return "STATUS|\(escape(value))\n"
+        case let .started(outputPath, tokenPath):
+            return "STARTED|\(escape(outputPath))|\(escape(tokenPath))\n"
         case .error(let message):
             return "ERR|\(escape(message))\n"
         }
@@ -99,6 +103,11 @@ enum HCIHelperCodec {
         let trimmed = line.trimmingCharacters(in: .newlines)
         if trimmed == "OK" { return .ok }
         if trimmed == "PONG" { return .pong }
+        if trimmed.hasPrefix("STARTED|") {
+            let parts = splitFields(trimmed)
+            guard parts.count >= 3 else { return nil }
+            return .started(outputPath: unescape(parts[1]), tokenPath: unescape(parts[2]))
+        }
         if trimmed.hasPrefix("STATUS|") {
             let parts = splitFields(trimmed)
             guard parts.count >= 2 else { return nil }
@@ -165,6 +174,16 @@ enum HCIHelperCodec {
     }
 }
 
+enum HCIHelperPathValidation {
+    /// Only allow PacketLogger binaries packaged inside an `.app` bundle.
+    static func isAllowedPacketLoggerPath(_ path: String) -> Bool {
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        guard FileManager.default.isExecutableFile(atPath: resolved) else { return false }
+        guard resolved.hasSuffix("/Contents/Resources/packetlogger") else { return false }
+        return resolved.contains(".app/")
+    }
+}
+
 enum HCIHelperInstall {
     static func makeLaunchdPlist(
         label: String,
@@ -207,17 +226,19 @@ enum HCIHelperInstall {
         let src = ShellQuote.single(helperSourcePath)
         let dst = ShellQuote.single(helperInstallPath)
         let plist = ShellQuote.single(plistPath)
+        let sessionRoot = ShellQuote.single(HCIHelperPaths.sessionRoot)
         let plistBody = makeLaunchdPlist(
             label: label,
             helperPath: helperInstallPath,
             socketPath: socketPath
         )
-        // Embed plist via heredoc written by the install shell.
         return """
         #!/bin/sh
         set -e
         umask 022
-        mkdir -p /Library/PrivilegedHelperTools /Library/LaunchDaemons
+        mkdir -p /Library/PrivilegedHelperTools /Library/LaunchDaemons \(sessionRoot)
+        chown root:wheel \(sessionRoot)
+        chmod 755 \(sessionRoot)
         cp \(src) \(dst)
         chown root:wheel \(dst)
         chmod 755 \(dst)
@@ -246,6 +267,7 @@ enum HCIHelperInstall {
         rm -f \(ShellQuote.single(plistPath))
         rm -f \(ShellQuote.single(helperInstallPath))
         rm -f \(ShellQuote.single(socketPath))
+        rm -rf \(ShellQuote.single(HCIHelperPaths.sessionRoot))
         """
     }
 }
