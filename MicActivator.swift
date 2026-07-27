@@ -18,19 +18,36 @@ final class MicActivator {
 
     /// Prefer devices already seized by `RemoteInputHandler` so SetReport is not
     /// rejected with `kIOReturnExclusiveAccess`.
+    ///
+    /// Does **not** toggle PushToTalk off first — HID reattach during an active
+    /// hold used to call `disarm()` and cut the mic stream mid-utterance.
     func useSharedDevices(_ devices: [IOHIDDevice]) {
-        disarm()
+        if ownsDevices {
+            for device in openDevices {
+                IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+            }
+        }
         openDevices = devices
         ownsDevices = false
         rmDebug("🎤 MicActivator using \(devices.count) shared HID device(s)")
-        sendEnable()
-        tryPushToTalk(enabled: true)
+        // Device attachment is not a Siri hold. Only `rearmOnSiriDown()` should
+        // write reports / toggle PushToTalk; doing it here caused startup storms
+        // while bluetoothd re-enumerated the remote's HID interfaces.
     }
 
     /// Open every Apple remote-looking HID device and keep them for SetReport.
     func arm() {
-        disarm()
+        // Never call disarm() here — that would leave shared devices in openDevices
+        // then mark ownsDevices=true and close RemoteInputHandler's seize on teardown.
+        if ownsDevices {
+            for device in openDevices {
+                IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+            }
+        }
+        openDevices.removeAll()
         ownsDevices = true
+        tryPushToTalk(enabled: false)
+
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         IOHIDManagerSetDeviceMatching(manager, nil)
         IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -80,9 +97,11 @@ final class MicActivator {
             for device in openDevices {
                 IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
             }
+            openDevices.removeAll()
+            ownsDevices = false
         }
-        openDevices.removeAll()
-        ownsDevices = false
+        // Shared devices (from RemoteInputHandler seize) must stay retained —
+        // clearing them made every rearm after the first Siri release a no-op.
     }
 
     private func sendEnable() {

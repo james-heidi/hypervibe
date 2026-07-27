@@ -21,13 +21,15 @@ class RemoteInputHandler {
 
     private let cursorController: CursorController
     private weak var menuBarManager: MenuBarManager?
+    private let mediaController = MediaController()
     private var devices: [IOHIDDevice] = []
     
     /// Called on any button activity; use to trigger trackpad re-scan after remote wake.
     var onButtonActivity: (() -> Void)?
 
-    /// Siri button press/release for the remote-mic pipeline (runs alongside mapped actions).
-    var onSiriMic: ((Bool) -> Void)?
+    /// Siri button press/release for the remote-mic pipeline. Return true to consume
+    /// the normal mapped action while push-to-talk dictation is enabled.
+    var onSiriMic: ((Bool) -> Bool)?
     
     // First press after connection: do not perform action (sound already played at connect).
     private var isFirstPressAfterConnection = false
@@ -139,17 +141,24 @@ class RemoteInputHandler {
         }
         buttonState[buttonName] = isPressed
 
-        // Volume keys on the Siri Remote also travel over BT AVRCP absolute-volume, which
-        // coreaudiod honors below cghidEventTap. Arm the revert guard on every press so the
-        // CoreAudio listener snaps the level back to the pre-press value.
+        // Volume keys also travel over BT AVRCP absolute-volume. Arm the revert guard for
+        // remapped actions so AVRCP doesn't change the level. Native volume mapping applies
+        // its own sticky CoreAudio hold inside applyVolumeStep.
         if isPressed && (buttonName == "volumeUp" || buttonName == "volumeDown") {
-            VolumeRevertGuard.shared.armFromRemoteButton()
+            let mapped = menuBarManager?.getMapping(for: buttonName) ?? .none
+            if mapped != ButtonAction.nativeMediaAction(forButton: buttonName) {
+                VolumeRevertGuard.shared.armFromRemoteButton()
+            }
         }
 
-        // First key-down after connection: skip so the connect handshake doesn't fire an action.
+        // First key-down after connection: skip so the connect handshake doesn't fire
+        // an action. Siri is exempt — a press to dictate must count even when it's the
+        // press that woke/reconnected the remote.
         if intValue == 1 && isFirstPressAfterConnection {
             isFirstPressAfterConnection = false
-            return
+            if buttonName != "siri" {
+                return
+            }
         }
 
         // Select mapped to Mouse Click keeps the special click/drag semantics;
@@ -177,10 +186,19 @@ class RemoteInputHandler {
         }
 
         if buttonName == "siri" {
-            onSiriMic?(pressed)
+            if onSiriMic?(pressed) == true {
+                return
+            }
         }
 
-        let action = menuBarManager?.getMapping(for: buttonName) ?? ButtonAction.none
+        var action = menuBarManager?.getMapping(for: buttonName) ?? ButtonAction.none
+        if buttonName == "siri", action == .none {
+            // Schema v6 removed siri from remappable buttons (reserved for
+            // push-to-talk). When dictation didn't consume the press — helper or
+            // PacketLogger missing — fall back to the pre-v6 default (Space hold)
+            // so the button isn't dead.
+            action = .spaceKey
+        }
         if pressed {
             print("🔘 Button pressed: \(buttonName) → \(action.rawValue)")
         }
@@ -304,27 +322,16 @@ class RemoteInputHandler {
             if trackpadControlEnabled {
                 cursorController.performClick()
             }
-        }
-    }
-
-    /// Route an authenticated iPhone action through the same key lifecycle as HID input.
-    /// `sourceID` is server-generated and is never derived into a raw key code.
-    func handleExternalAction(_ action: ButtonAction, sourceID: String, pressed: Bool) {
-        // Web sourceIDs are not in holdCapableButtons; their down/up lifecycle is
-        // guaranteed by the server's heartbeat watchdog, so route holds directly.
-        if action.requiresHold {
-            handleHoldAction(action, button: sourceID, pressed: pressed)
-        } else {
-            executeAction(action, button: sourceID, pressed: pressed)
-        }
-    }
-
-    /// Release holds owned by one external connection without disturbing a physical remote hold.
-    func releaseHeldKeys(sourcePrefix: String) {
-        let matchingKeys = heldKeys.keys.filter { $0.hasPrefix(sourcePrefix) }
-        for key in matchingKeys {
-            guard let held = heldKeys.removeValue(forKey: key) else { continue }
-            releaseHeldKey(held)
+        case .volumeUp:
+            // CoreAudio step + sticky hold against AVRCP. Do not post NX media keys —
+            // they re-enter the interceptor and often show a HUD without a lasting change.
+            VolumeRevertGuard.shared.applyVolumeStep(1)
+        case .volumeDown:
+            VolumeRevertGuard.shared.applyVolumeStep(-1)
+        case .mute:
+            mediaController.sendMediaKey(.mute)
+        case .playPause:
+            mediaController.sendMediaKey(.playPause)
         }
     }
 

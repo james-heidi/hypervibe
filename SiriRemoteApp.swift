@@ -18,8 +18,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var remoteInputHandler: RemoteInputHandler?
     private var mediaKeyInterceptor: MediaKeyInterceptor?
     private var touchHandler: TouchHandler?
-    private var remoteWebServer: RemoteWebServer?
     private var remoteMicController: RemoteMicController?
+    private var micWakeObserver: NSObjectProtocol?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("🚀 HyperVibe starting...")
@@ -41,6 +41,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Initialize menu bar manager
         menuBarManager = MenuBarManager(statusItem: statusItem)
+        menuBarManager.mediaController = MediaController()
         
         // Check accessibility permissions
         checkAccessibilityPermissions()
@@ -54,41 +55,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         inputHandler.setTrackpadControlEnabled(menuBarManager.trackpadControlEnabled)
         remoteInputHandler = inputHandler
-
-        // Local iPhone PWA. Semantic IDs resolve only to fixed ButtonAction/SwipeAction
-        // allowlists; the phone's push-to-talk key has its own live menu setting.
-        let webServer = RemoteWebServer(
-            inputHandler: inputHandler,
-            actionResolver: { [weak self] actionID in
-                guard let menuBarManager = self?.menuBarManager else { return nil }
-                let pushToTalkAction = menuBarManager.getRemoteTalkAction()
-                return ButtonAction.remoteAction(for: actionID, pushToTalkAction: pushToTalkAction)
-            },
-            commandHandler: { [weak menuBarManager] action in
-                menuBarManager?.executeSwipeAction(action)
-            }
-        )
-        remoteWebServer = webServer
-        menuBarManager.onRemoteServerToggle = { [weak webServer] enabled in
-            webServer?.setEnabled(enabled)
-        }
-        webServer.onStatusChange = { [weak menuBarManager] status in
-            menuBarManager?.updateRemoteServerStatus(
-                enabled: status.enabled,
-                connectURL: status.connectURL,
-                error: status.error
-            )
-        }
-        webServer.startFromSavedPreference()
         
         // Start touch handler for trackpad (before remote detection so we can wire the callback)
         let touchInputHandler = TouchHandler(cursorController: cursorController)
         touchHandler = touchInputHandler
         touchInputHandler.scrollScale = menuBarManager.scrollSpeed.scale
         touchInputHandler.setTrackpadControlEnabled(menuBarManager.trackpadControlEnabled)
-        touchInputHandler.onSwipe = { [weak menuBarManager] direction in
-            menuBarManager?.executeSwipe(direction)
-        }
         menuBarManager.onTrackpadControlToggle = { [weak inputHandler, weak touchInputHandler] enabled in
             inputHandler?.setTrackpadControlEnabled(enabled)
             touchInputHandler?.setTrackpadControlEnabled(enabled)
@@ -96,15 +68,61 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         touchInputHandler.start()
         remoteInputHandler?.onButtonActivity = { [weak self] in
             self?.touchHandler?.tryReconnectTrackpad()
+            self?.remoteMicController?.ensureCaptureWarm()
         }
 
-        // A2854 remote mic → PacketLogger HCI → Opus → BlackHole (zero extra hardware).
+        // A2854 remote mic → PacketLogger HCI → Opus → selectable transcription engine.
+        // Dictation is always on (no menu toggle); helper install remains a one-shot prompt.
         let mic = RemoteMicController()
         remoteMicController = mic
-        menuBarManager.onRemoteMicToggle = { [weak mic] enabled in
-            mic?.setEnabled(enabled)
+        let ensureDictation: () -> Void = { [weak self, weak mic] in
+            // Helper ping + system_profiler can block for seconds — never on main.
+            DispatchQueue.global(qos: .userInitiated).async {
+                let helperReady = HCIHelperClient.isReady()
+                let labReady = helperReady && RemoteMicLab.evaluate().isReady
+                DispatchQueue.main.async {
+                    guard let self, let mic else { return }
+                    guard labReady else {
+                        // Prerequisites missing (helper/PacketLogger/profile) —
+                        // disable so handleSiri returns false and Siri presses
+                        // fall through to HID mapping instead of being consumed.
+                        mic.setEnabled(false)
+                        self.menuBarManager.remoteMicEnabled = false
+                        return
+                    }
+                    mic.setEnabled(true)
+                    self.menuBarManager.remoteMicEnabled = true
+                    mic.attachSeizedDevices(self.remoteInputHandler?.seizedDevices ?? [])
+                    mic.startIdleCaptureIfEnabled()
+                }
+            }
         }
-        menuBarManager.remoteMicEnabled = mic.enabled
+        menuBarManager.onEnsureDictationEnabled = ensureDictation
+        menuBarManager.onTranscriptionEngineChange = { [weak mic] id in
+            mic?.setEngine(id)
+        }
+        menuBarManager.onOpenAIKeySave = { [weak mic] key in
+            do {
+                try TranscriptionKeychain.saveOpenAIKey(key)
+                mic?.prepareSelectedEngine(completion: nil)
+            } catch {
+                let alert = NSAlert.hyperVibeAlert()
+                alert.messageText = "无法保存 OpenAI Key"
+                alert.informativeText = error.localizedDescription
+                alert.runHyperVibeModal()
+            }
+        }
+        menuBarManager.onParakeetDownload = { [weak mic] in
+            mic?.setEngine(.parakeet)
+            mic?.startParakeetDownload(completion: nil)
+        }
+        menuBarManager.onParakeetDownloadCancel = { [weak mic] in
+            mic?.cancelParakeetDownload()
+        }
+        // Off until ensureDictation confirms lab readiness (async, below).
+        menuBarManager.remoteMicEnabled = false
+        menuBarManager.selectedTranscriptionEngine = mic.engineID
+        menuBarManager.transcriptionEngineStatus = mic.engineState
         mic.onStatus = { [weak self] status, deviceName in
             self?.menuBarManager.updateRemoteMicStatus(
                 enabled: self?.remoteMicController?.enabled ?? false,
@@ -112,11 +130,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 sinkName: deviceName
             )
         }
-        inputHandler.onSiriMic = { [weak mic] pressed in
-            mic?.handleSiri(pressed: pressed)
+        mic.onReadinessState = { [weak menuBarManager] state in
+            menuBarManager?.updateMicReadiness(state)
         }
-        mic.startIdleCaptureIfEnabled()
-        
+        mic.onAudioLevel = { [weak menuBarManager] level in
+            menuBarManager?.updateMicAudioLevel(level)
+        }
+        mic.onEngineState = { [weak menuBarManager] id, state in
+            menuBarManager?.updateTranscriptionEngine(id: id, state: state)
+        }
+        mic.onTranscribedText = { [weak menuBarManager] text in
+            menuBarManager?.typeDictationText(text)
+        }
+        inputHandler.onSiriMic = { [weak mic] pressed in
+            mic?.handleSiri(pressed: pressed) ?? false
+        }
+        ensureDictation()
+        // Warm capture starts from ensureDictation once helper readiness is known off-main.
         // Start remote detection
         remoteDetector = RemoteDetector { [weak self] device in
             DispatchQueue.main.async {
@@ -125,9 +155,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if let devices = self?.remoteInputHandler?.seizedDevices {
                     self?.remoteMicController?.attachSeizedDevices(devices)
                 }
+                if device != nil {
+                    // Remote may connect after launch; warm capture immediately instead
+                    // of waiting for the first Siri press.
+                    ensureDictation()
+                    self?.remoteMicController?.ensureCaptureWarm()
+                } else {
+                    // Release any held push-to-talk — a disconnect mid-press means the
+                    // Siri key-up will never arrive.
+                    self?.remoteMicController?.remoteDidDisconnect()
+                }
             }
         }
         remoteDetector?.startDetection()
+        menuBarManager.requestMenuRebuild()
+
+        micWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak mic] _ in
+            mic?.ensureCaptureWarm()
+        }
         
         // Request Input Monitoring so media key tap works in both CLI and .app
         if #available(macOS 10.15, *) {
@@ -159,8 +208,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func cleanup() {
+        if let observer = micWakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            micWakeObserver = nil
+        }
         remoteMicController?.shutdown()
-        remoteWebServer?.shutdown()
         remoteInputHandler?.releaseAllHeldKeys()
         touchHandler?.stop()
         remoteDetector?.stopDetection()
@@ -196,6 +248,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .mute:       buttonName = "mute"
         }
 
+        let action = menuBarManager.getMapping(for: buttonName)
+
+        // Native volume/mute/playPause: HID already applied (or will apply) the real
+        // action. Always consume the system media key so we don't get a HUD-only
+        // NX event fighting AVRCP absolute-volume.
+        if let native = ButtonAction.nativeMediaAction(forButton: buttonName), action == native {
+            if RemoteInputHandler.lastProcessedButton == buttonName {
+                let timeSinceLastProcess = Self.machDeltaToSeconds(from: RemoteInputHandler.lastProcessedTime)
+                if timeSinceLastProcess < 0.2 {
+                    return true
+                }
+            }
+            RemoteInputHandler.lastProcessedButton = buttonName
+            RemoteInputHandler.lastProcessedTime = mach_absolute_time()
+            menuBarManager.executeAction(action.rawValue)
+            return true
+        }
+
         // Debounce: if the HID path just handled this button, don't double-fire.
         if RemoteInputHandler.lastProcessedButton == buttonName {
             let timeSinceLastProcess = Self.machDeltaToSeconds(from: RemoteInputHandler.lastProcessedTime)
@@ -204,14 +274,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        let action = menuBarManager.getMapping(for: buttonName)
         if action != .none {
             RemoteInputHandler.lastProcessedButton = buttonName
             RemoteInputHandler.lastProcessedTime = mach_absolute_time()
             menuBarManager.executeAction(action.rawValue)
         }
-        // Always consume — no action in this app corresponds to a system media key anymore,
-        // so we never want macOS's default media handler to fire.
+        // Always consume remapped media keys — default macOS handler must not fire.
         return true
     }
     

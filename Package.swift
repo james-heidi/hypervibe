@@ -1,18 +1,24 @@
 // swift-tools-version: 5.9
 // NOTE: This package does not include MultitouchSupport.framework (private API).
-// Use build.sh for full trackpad support.
+// Use build.sh for full trackpad + FluidAudio Parakeet support.
 
 import PackageDescription
 
 let package = Package(
     name: "HyperVibe",
-    platforms: [.macOS(.v11)],
+    platforms: [.macOS(.v14)],
     products: [
         .executable(name: "HyperVibe", targets: ["HyperVibe"])
+    ],
+    dependencies: [
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.5")
     ],
     targets: [
         .executableTarget(
             name: "HyperVibe",
+            dependencies: [
+                .product(name: "FluidAudio", package: "FluidAudio")
+            ],
             path: ".",
             sources: [
                 "main.swift",
@@ -20,7 +26,6 @@ let package = Package(
                 "MenuBarManager.swift",
                 "RemoteDetector.swift",
                 "RemoteInputHandler.swift",
-                "RemoteWebServer.swift",
                 "CursorController.swift",
                 "MediaController.swift",
                 "MediaKeyInterceptor.swift",
@@ -28,10 +33,19 @@ let package = Package(
                 "SystemVolume.swift",
                 "OpusVoiceDecoder.swift",
                 "BlackHoleAudioSink.swift",
+                "HCICaptureBootstrap.swift",
                 "MicActivator.swift",
                 "MicCapturePipeline.swift",
                 "RemoteMicController.swift",
-                "HCIEventTap.swift"
+                "RemoteMicLab.swift",
+                "TranscriptionEngine.swift",
+                "TranscriptionKeychain.swift",
+                "OpenAITranscriptionEngine.swift",
+                "ParakeetTranscriptionEngine.swift",
+                "HCIHelperProtocol.swift",
+                "HCIHelperClient.swift",
+                "HCIEventTap.swift",
+                "DurableCaptureSpike.swift"
             ],
             linkerSettings: [
                 .linkedFramework("IOKit"),
@@ -39,10 +53,15 @@ let package = Package(
                 .linkedFramework("AudioToolbox"),
                 .linkedFramework("Carbon"),
                 .linkedFramework("AppKit"),
-                .linkedFramework("Network"),
                 .linkedFramework("CoreAudio"),
+                .linkedFramework("AVFoundation"),
                 .linkedFramework("IOBluetooth"),
-                .linkedLibrary("opus")
+                .linkedFramework("CoreML"),
+                .linkedFramework("Accelerate"),
+                .linkedFramework("NaturalLanguage"),
+                .linkedFramework("Security"),
+                .linkedLibrary("opus"),
+                .linkedLibrary("c++")
             ]
         )
     ]

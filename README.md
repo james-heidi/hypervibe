@@ -45,56 +45,19 @@ Each physical Siri Remote button is independently assignable via the menu bar.
 **Hold-Capable Buttons:** Push-to-talk actions require buttons that emit both press and release HID events. Only Play/Pause, Volume Up, Volume Down, and Siri buttons allow for both events. Also this button can trigger right command or option key for other dictation apps like [VoiceInk](https://github.com/Beingpax/VoiceInk).
 
 
-### Swipe Gestures
-
-Four independently configurable single-finger swipe directions on the trackpad surface. Detection is velocity-gated: **distance ≥ 35%** of trackpad, **duration < 350 ms**, **dominant axis ≥ 2×** the other. Slow drags continue to move the cursor; only deliberate flicks trigger actions.
-
-<img src="siri-remote-gesture-mapping.png" alt="Siri Remote swipe gesture mapping" width="50%">
-
-<img src="screenshot-swipe-mapping.png" alt="Swipe Gestures menu screenshot" width="70%">
-
-**Default Gesture Mapping (Customizable):**
-- Swipe Up → `/usage`
-- Swipe Down → `/compact`
-- Swipe Left → `/model`
-- Swipe Right → Mode Switching (Shift + Tab)
-
-Assignable actions:
-
-- **Arrow keys (direction-matched)**: "Left: Navigate Left" offered only on Swipe Left; "Right: Navigate Right" offered only on Swipe Right.
-- **Mode Switching (Shift + Tab)** — toggle between normal / plan / auto-accept modes in Claude Code.
-- **`ultrathink`** — inserts the keyword (with trailing space) into the prompt.
-- **Slash commands**: `/btw`, `/compact`, `/config`, `/context`, `/effort`, `/init`, `/model`, `/remote-control`, `/schedule`, `/tasks`, `/usage`.
-- **None**.
-
-**Trailing-space policy.** Commands that typically take an argument (`/btw`, `/schedule`, `ultrathink`) are typed with a trailing space so you can keep typing. Commands that stand alone or open an interactive picker (`/compact`, `/config`, `/context`, `/effort`, `/init`, `/model`, `/remote-control`, `/tasks`, `/usage`) are typed without a trailing space.
-
-**Enter is never sent** — gestures type the command but leave Enter for the user, so the command can be reviewed, edited, or augmented with arguments.
-
-### Other Trackpad Inputs
+### Trackpad Inputs
 
 - **Cursor movement** via single-finger drag
 - **Two-finger scroll** (natural-scroll direction, configurable scale)
 - **Tap-to-click** on the trackpad surface
 - **Drag** by holding the trackpad click and moving
 
-### iPhone Remote
-
-HyperVibe can serve a touch remote directly to iPhone Safari, with buttons for Esc, Enter, arrow keys, Ctrl+C, and push-to-talk. No separate iOS app is required.
-
-1. Open the HyperVibe menu-bar menu and enable **iPhone Remote**.
-2. Click the **Connect: http://...** menu item to copy the connect URL, then open it in Safari on an iPhone connected to the same local network. The URL contains the private pairing token, so treat it as a secret.
-3. In Safari, choose **Share → Add to Home Screen** to install it as a PWA.
-
-The large **Hold to Talk** button presses the configured push-to-talk key for as long as it is held and releases it when the finger lifts or the page is hidden. The server binds only to the Mac's private local-network IPv4 address; it has no cloud or internet relay. Authenticated WebSocket heartbeats automatically release a held key if the heartbeat stops, the socket disconnects, the Mac sleeps, or the server restarts while rebinding after a network/IP change.
-
 ### Persistence
 
-Button mappings and swipe mappings are saved to UserDefaults (`buttonMappings`, `swipeMappings`) and survive restarts. Schema versioning handles future upgrades (`buttonMappingsSchema`).
+Button mappings are saved to UserDefaults (`buttonMappings`) and survive restarts. Schema versioning handles future upgrades (`buttonMappingsSchema`).
 
 ### Safety
 
-- **Stuck-key prevention.** If the remote disconnects while a push-to-talk key is held, HyperVibe releases the virtual key automatically.
 - **Stale-hold self-heal.** If a release HID event is ever missed, the next press closes the stale hold before opening a new one.
 - **HID seize.** On connect, HyperVibe seizes the remote at the HID level so macOS no longer also sees media key events from it — no double-dispatch (e.g., to iTunes/Music), no system funk sound on unhandled keys.
 
@@ -104,7 +67,7 @@ Button mappings and swipe mappings are saved to UserDefaults (`buttonMappings`, 
 
 ### Prerequisites
 
-- macOS 11 (Big Sur) or later
+- macOS 14 (Sonoma) or later
 - Xcode Command Line Tools: `xcode-select --install`
 
 ### Build
@@ -127,8 +90,8 @@ This runs a single `swiftc` invocation over all the project's Swift files, linki
    - **Input Monitoring** (for reading HID events)
    - **Bluetooth** (to communicate with the remote)
 5. Pair the Siri Remote via **System Settings → Bluetooth** if it isn't already paired
-6. Use the menu-bar walkie-talkie glyph to access Button Mappings and Swipe Gestures
-7. **Optional — A2854 remote microphone (no USB dongle):** run `./scripts/setup_remote_mic.sh`, install Apple’s Bluetooth logging profile + PacketLogger + BlackHole 2ch (reboot), then enable **远程麦克风** in the menu. Hold Siri and set your dictation app’s input to **BlackHole 2ch**. Details: [docs/remote-mic.md](docs/remote-mic.md).
+6. Use the menu-bar icon to access Button Mappings and dictation settings
+7. **Internal remote dictation prototype:** build packaging copies `/Applications/PacketLogger.app` into HyperVibe. Pick an engine (OpenAI / Parakeet), approve the administrator prompt, then hold Siri to speak and release to type into the focused app. Parakeet models download only when selected. BlackHole, Bluetooth logging profiles, and sudoers edits are not required. See [docs/remote-mic.md](docs/remote-mic.md).
 
 > ⚠️ **Important:** You must explicitly add **HyperVibe.app** to **System Settings → Privacy & Security → Input Monitoring** (click the **+** button and select the app). Without this, HyperVibe may not properly intercept HID events/media keys, which means vol up and down buttons and play/pause buttons will trigger volume change and triggering of Apple Music.
 
@@ -176,7 +139,7 @@ Between the private `MultitouchSupport` framework and the undocumented `NX_SYSDE
 
 ## Credits
 
- **Fork & improvements.** HyperVibe is built on top of [Remotastic](https://github.com/lauschue/Remotastic) by [@lauschue](https://github.com/lauschue), which provided the foundational Siri-Remote HID handling, MultitouchSupport integration, and menu-bar scaffolding. HyperVibe extends it with configurable Claude Code workflows, keyboard shortcuts, push-to-talk and swipe gesture.
+ **Fork & improvements.** HyperVibe is built on top of [Remotastic](https://github.com/lauschue/Remotastic) by [@lauschue](https://github.com/lauschue), which provided the foundational Siri-Remote HID handling, MultitouchSupport integration, and menu-bar scaffolding. HyperVibe extends it with configurable Claude Code workflows, keyboard shortcuts, and push-to-talk dictation.
 - Icons from [The Noun Project](https://thenounproject.com/):
   - [Arrow Up by Dayeong Kim](https://thenounproject.com/icon/arrow-up-6066125/)
   - [Microphone by Alvida](https://thenounproject.com/icon/microphone-8162320/)

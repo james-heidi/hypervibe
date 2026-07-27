@@ -33,7 +33,15 @@ final class MicCapturePipeline {
     var onPayload: ((Data) -> Void)?
 
     private var process: Process?
+    private var helperSessionActive = false
+    private var restartAfterTeardown = false
     private var stdoutSource: DispatchSourceRead?
+    private var fileReadTimer: DispatchSourceTimer?
+    private var helperWatchTimer: DispatchSourceTimer?
+    private var captureDirectory: URL?
+    private var captureOutputURL: URL?
+    private var captureTokenURL: URL?
+    private var captureReadOffset: UInt64 = 0
     private let queue = DispatchQueue(label: "com.hypervibe.mic-capture")
     private var buffer = Data()
     private var remoteAddress: String
@@ -56,14 +64,22 @@ final class MicCapturePipeline {
     }
 
     static func packetLoggerURL() -> URL? {
-        let candidates = [
+        var candidates = [String]()
+        if let resources = Bundle.main.resourceURL {
+            candidates.append(
+                resources
+                    .appendingPathComponent("Tools/PacketLogger.app/Contents/Resources/packetlogger")
+                    .path
+            )
+        }
+        candidates.append(contentsOf: [
             "/Applications/PacketLogger.app/Contents/Resources/packetlogger",
             "\(NSHomeDirectory())/Applications/PacketLogger.app/Contents/Resources/packetlogger",
             "\(NSHomeDirectory())/Downloads/PacketLogger.app/Contents/Resources/packetlogger",
             "/usr/local/bin/packetlogger",
             "\(NSHomeDirectory())/Desktop/SiriRemote/PacketLogger.app/Contents/Resources/packetlogger",
-        ]
-        for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
+        ])
+        if let path = PacketLoggerLocator.firstExecutable(candidates: candidates) {
             return URL(fileURLWithPath: path)
         }
         // Search Additional Tools DMG mounts
@@ -162,80 +178,105 @@ final class MicCapturePipeline {
 
     func start() {
         queue.async {
-            if self.process != nil { return }
+            if self.helperSessionActive || self.process != nil {
+                self.restartAfterTeardown = true
+                return
+            }
+            self.restartAfterTeardown = false
             guard let logger = Self.packetLoggerURL() else {
                 self.status = .missingTools("PacketLogger")
                 rmDebug("🎤 PacketLogger binary not found — will retry")
                 // Retry periodically so installing tools mid-session recovers without relaunch.
                 self.queue.asyncAfter(deadline: .now() + 15) { [weak self] in
-                    guard let self, self.process == nil else { return }
+                    guard let self, !self.helperSessionActive, self.process == nil else { return }
                     if case .missingTools = self.status {
                         self.start()
                     }
                 }
                 return
             }
-            if !Self.bluetoothProfileInstalled() {
-                // Still try — some machines work briefly; surface the warning.
-                rmDebug("🎤 WARNING: Bluetooth logging profile not listed; PacketLogger may refuse live HCI")
+            guard HCIHelperClient.isReady() else {
+                self.status = .missingTools("麦克风组件")
+                rmDebug("🎤 HCI helper not installed/ready")
+                return
             }
-
             self.status = .starting
             self.framesSeen = 0
             self.buffer.removeAll(keepingCapacity: true)
             self.aclAssemblies.removeAll()
+            self.startHelperCapture(logger: logger)
+        }
+    }
 
-            let proc = Process()
-            // packetlogger needs root for live HCI on modern macOS.
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-            proc.arguments = ["-n", logger.path, "convert", "-s", "-f", "nhdr"]
-            let out = Pipe()
-            let err = Pipe()
-            proc.standardOutput = out
-            proc.standardError = err
-            proc.terminationHandler = { [weak self] p in
-                guard let self else { return }
-                self.queue.async {
-                    self.teardownIO()
-                    if self.status != .idle {
-                        let errData = err.fileHandleForReading.readDataToEndOfFile()
-                        let errText = String(data: errData, encoding: .utf8) ?? ""
-                        if errText.localizedCaseInsensitiveContains("Profile Required")
-                            || errText.localizedCaseInsensitiveContains("Bluetooth Profile") {
-                            self.status = .missingTools("Bluetooth logging profile")
-                        } else if p.terminationStatus != 0 {
-                            self.status = .error("packetlogger exit \(p.terminationStatus)")
-                        } else {
-                            self.status = .idle
-                        }
-                    }
-                    self.process = nil
-                    rmDebug("🎤 packetlogger terminated status=\(p.terminationStatus)")
-                }
-            }
+    /// Starts PacketLogger through the one-shot installed LaunchDaemon helper.
+    /// Admin password is only required when installing that helper, not per capture.
+    private func startHelperCapture(logger: URL) {
+        guard HCIHelperPathValidation.isAllowedPacketLoggerPath(logger.path) else {
+            status = .error("packetlogger path rejected")
+            rmDebug("🎤 packetlogger path rejected: \(logger.path)")
+            return
+        }
 
-            do {
-                try proc.run()
-            } catch {
-                self.status = .error(error.localizedDescription)
-                rmDebug("🎤 failed to launch packetlogger: \(error)")
+        captureDirectory = nil
+        captureOutputURL = nil
+        captureTokenURL = nil
+        captureReadOffset = 0
+
+        do {
+            let response = try HCIHelperClient.send(
+                .start(
+                    packetLoggerPath: logger.path,
+                    parentPID: getpid()
+                ),
+                timeout: 12
+            )
+            guard case let .started(outputPath, tokenPath) = response else {
+                status = .error("helper did not return session paths")
                 return
             }
-
-            self.process = proc
-            let fd = out.fileHandleForReading.fileDescriptor
-            let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: self.queue)
-            source.setEventHandler { [weak self] in
-                self?.readAvailable(from: out.fileHandleForReading)
-            }
-            source.setCancelHandler {
-                try? out.fileHandleForReading.close()
-            }
-            self.stdoutSource = source
-            source.resume()
-            self.status = .listening
-            rmDebug("🎤 packetlogger started addr=\(self.remoteAddress.isEmpty ? "*" : self.remoteAddress)")
+            captureOutputURL = URL(fileURLWithPath: outputPath)
+            captureTokenURL = URL(fileURLWithPath: tokenPath)
+            captureDirectory = captureOutputURL?.deletingLastPathComponent()
+        } catch {
+            status = .error(error.localizedDescription)
+            removeCaptureDirectory()
+            rmDebug("🎤 helper start failed: \(error)")
+            return
         }
+
+        helperSessionActive = true
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 0.1, repeating: 0.1)
+        timer.setEventHandler { [weak self] in
+            self?.readPrivilegedOutput()
+        }
+        fileReadTimer = timer
+        timer.resume()
+
+        // Poll helper status off the capture queue so a slow ping cannot stall audio reads.
+        let statusQueue = DispatchQueue(label: "com.hypervibe.mic-capture.status")
+        let watch = DispatchSource.makeTimerSource(queue: statusQueue)
+        watch.schedule(deadline: .now() + 1.0, repeating: 1.0)
+        watch.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.queue.async {
+                guard self.helperSessionActive else { return }
+            }
+            if case .status(let value) = try? HCIHelperClient.send(.status, timeout: 1.0),
+               value == "idle" {
+                self.queue.async {
+                    // Unexpected helper exit must self-heal; otherwise the next Siri
+                    // press is forced through a cold start.
+                    self.restartAfterTeardown = true
+                    self.finishHelperSession(restartIfNeeded: true)
+                }
+            }
+        }
+        helperWatchTimer = watch
+        watch.resume()
+
+        status = .listening
+        rmDebug("🎤 helper capture started addr=\(remoteAddress.isEmpty ? "*" : remoteAddress)")
     }
 
     func stop() {
@@ -244,24 +285,100 @@ final class MicCapturePipeline {
 
     private func stopSync() {
         status = .idle
-        if let proc = process, proc.isRunning {
+        restartAfterTeardown = false
+        // Drop the liveness token and ask the helper to stop PacketLogger / restore prefs.
+        if let token = captureTokenURL {
+            try? FileManager.default.removeItem(at: token)
+        }
+        if helperSessionActive {
+            _ = try? HCIHelperClient.send(.stop, timeout: 5)
+        } else if let proc = process, proc.isRunning {
             proc.terminate()
         }
-        teardownIO()
-        process = nil
+        finishHelperSession(restartIfNeeded: false)
         buffer.removeAll()
         aclAssemblies.removeAll()
+    }
+
+    private func finishHelperSession(restartIfNeeded: Bool) {
+        teardownIO()
+        helperSessionActive = false
+        process = nil
+        removeCaptureDirectory()
+        if restartIfNeeded, restartAfterTeardown {
+            restartAfterTeardown = false
+            start()
+            return
+        }
+        if case .error = status {
+            return
+        }
+        if status != .idle {
+            status = .idle
+        }
     }
 
     private func teardownIO() {
         stdoutSource?.cancel()
         stdoutSource = nil
+        fileReadTimer?.cancel()
+        fileReadTimer = nil
+        helperWatchTimer?.cancel()
+        helperWatchTimer = nil
+    }
+
+    private func removeCaptureDirectory() {
+        // Helper owns the session directory under /var/tmp; only drop the liveness token.
+        if let token = captureTokenURL {
+            try? FileManager.default.removeItem(at: token)
+        }
+        captureDirectory = nil
+        captureOutputURL = nil
+        captureTokenURL = nil
+        captureReadOffset = 0
+    }
+
+    private static let captureRotateBytes: UInt64 = 32 * 1024 * 1024
+
+    private func readPrivilegedOutput() {
+        guard let output = captureOutputURL,
+              let handle = try? FileHandle(forReadingFrom: output) else { return }
+        defer { try? handle.close() }
+        do {
+            try handle.seek(toOffset: captureReadOffset)
+            let chunk = try handle.readToEnd() ?? Data()
+            guard !chunk.isEmpty else {
+                // Rotate long-lived warm sessions before capture.nhdr grows without bound.
+                if captureReadOffset > Self.captureRotateBytes {
+                    rmDebug("🎤 rotating capture after \(captureReadOffset) bytes")
+                    restartAfterTeardown = true
+                    if let token = captureTokenURL {
+                        try? FileManager.default.removeItem(at: token)
+                    }
+                    _ = try? HCIHelperClient.send(.stop, timeout: 5)
+                    finishHelperSession(restartIfNeeded: true)
+                }
+                return
+            }
+            captureReadOffset += UInt64(chunk.count)
+            if status == .starting {
+                status = .listening
+            }
+            buffer.append(chunk)
+            consumeBufferedLines()
+        } catch {
+            rmDebug("🎤 capture tail read failed: \(error)")
+        }
     }
 
     private func readAvailable(from handle: FileHandle) {
         let chunk = handle.availableData
         if chunk.isEmpty { return }
         buffer.append(chunk)
+        consumeBufferedLines()
+    }
+
+    private func consumeBufferedLines() {
         while let range = buffer.range(of: Data([0x0A])) {
             let lineData = buffer.subdata(in: buffer.startIndex..<range.lowerBound)
             buffer.removeSubrange(buffer.startIndex...range.lowerBound)
