@@ -261,6 +261,18 @@ final class RemoteMicController {
                 }
             }
             guard !siriHeld else { return true }
+            switch capture.status {
+            case .error, .missingTools:
+                // Capture stack is broken (helper died, PacketLogger missing):
+                // don't swallow the button. Fall through to HID mapping and kick
+                // a warm-up retry so a recovered stack serves the next press.
+                // .idle stays consumed — that's the normal cold-start path.
+                rmDebug("🎤 Siri down — capture \(capture.status), falling through")
+                ensureCaptureWarm()
+                return false
+            case .idle, .starting, .listening, .streaming:
+                break
+            }
             siriHeld = true
             lastRearmStatus = nil
             utteranceReceivedFrame = false
