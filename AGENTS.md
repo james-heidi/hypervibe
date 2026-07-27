@@ -1,6 +1,6 @@
 # HyperVibe — Agent Guide
 
-macOS menu-bar app (Swift, AppKit) that turns a Siri Remote (1st-gen A1513) into an input device for Claude Code: buttons map to keys, trackpad swipes type slash commands, Siri button is push-to-talk. Fork of Remotastic.
+macOS menu-bar app (Swift, AppKit) that turns a Siri Remote (1st-gen A1513) into an input device for Claude Code: buttons map to keys, Siri button is push-to-talk. Fork of Remotastic.
 
 ## Build & Run
 
@@ -23,21 +23,26 @@ open HyperVibe.app
 |---|---|
 | `main.swift` | Entry point, spins up AppDelegate |
 | `SiriRemoteApp.swift` | AppDelegate, wiring, `RCDControl` (disables macOS's rcd media-key daemon) |
-| `MenuBarManager.swift` | Menu bar UI, `ButtonAction`/`SwipeAction`/`SwipeDirection` enums, mapping persistence (UserDefaults keys `buttonMappings`, `swipeMappings`, schema key `buttonMappingsSchema`) |
+| `MenuBarManager.swift` | Menu bar UI, `ButtonAction` enum, mapping persistence (UserDefaults keys `buttonMappings`, schema key `buttonMappingsSchema`) |
 | `RemoteDetector.swift` | IOKit HID detection/seizure of the remote (product ID `0x266`) |
 | `RemoteInputHandler.swift` | Raw HID button events → mapped actions; 200 ms debounce shared with MediaKeyInterceptor |
-| `RemoteWebServer.swift` | Local HTTP/PWA + authenticated WebSocket server; LAN rebinding and heartbeat/stuck-key safety |
 | `MediaKeyInterceptor.swift` | CGEvent tap catching AVRCP media keys (NX_SYSDEFINED path) |
 | `MediaController.swift` | Synthesizes NX_SYSDEFINED media-key events |
-| `TouchHandler.swift` | Trackpad via private MultitouchSupport: cursor, scroll, tap, swipe detection |
+| `TouchHandler.swift` | Trackpad via private MultitouchSupport: cursor, scroll, tap |
 | `CursorController.swift` | Posts mouse events |
 | `SystemVolume.swift` | Volume get/set + `VolumeRevertGuard` |
-| `RemoteMicController.swift` | A2854 Lab mic orchestration (activate + capture + decode + BlackHole); **opt-in / parked for consumers** |
-| `RemoteMicLab.swift` | Readiness + short “unavailable” alert (no customer wizard) |
+| `RemoteMicController.swift` | A2854 push-to-talk orchestration: activate + capture + decode + selected engine |
+| `RemoteMicLab.swift` | Minimal bundled-tool / paired-remote readiness |
+| `TranscriptionEngine.swift` | Pluggable engine protocol + factory (OpenAI / Parakeet) |
+| `OpenAITranscriptionEngine.swift` | WAV upload to OpenAI `/v1/audio/transcriptions` |
+| `ParakeetTranscriptionEngine.swift` | FluidAudio Parakeet with menu-triggered lazy model download |
+| `TranscriptionKeychain.swift` | OpenAI API key in Keychain |
 | `DurableCaptureSpike.swift` | Spike A/B CLI (`--spike-a`, `--spike-b`, `--spike-durable`) |
-| `MicCapturePipeline.swift` | PacketLogger HCI nhdr stream / offline replay |
+| `HCICaptureBootstrap.swift` | Bundled PacketLogger lookup + temporary privileged HCI settings script |
+| `MicCapturePipeline.swift` | Privileged PacketLogger HCI nhdr stream / offline replay |
 | `OpusVoiceDecoder.swift` | A2854 Opus → 48 kHz PCM |
-| `BlackHoleAudioSink.swift` | PCM → BlackHole 2ch (system-selectable mic) |
+| `BlackHoleAudioSink.swift` | Legacy diagnostic PCM → BlackHole path (`--test-blackhole`) |
+| `Vendor/FluidAudioDeps` | SPM wrapper to build/link FluidAudio (no model weights) |
 | `MicActivator.swift` | Host-side `0xAF` / PushToTalk activation probes |
 
 ## Fragile invariants — do not "clean up"

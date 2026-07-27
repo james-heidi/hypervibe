@@ -11,14 +11,11 @@ import Foundation
 let args = CommandLine.arguments
 if args.contains("--mic-check") {
     let r = RemoteMicLab.evaluate()
-    print("Lab ready:", r.isReady)
+    print("Remote dictation ready:", r.isReady)
     print("PacketLogger:", MicCapturePipeline.packetLoggerURL()?.path ?? "MISSING")
-    print("Bluetooth profile installed:", r.bluetoothProfile)
-    print("Profile likely expired:", r.profileLikelyExpired)
-    print("Profile expiring soon:", r.profileExpiringSoon)
+    print("HCI helper installed:", HCIHelperPaths.isInstalled)
+    print("HCI helper ready:", HCIHelperClient.isReady())
     print("Remote address:", r.remoteAddress ?? "MISSING")
-    print("BlackHole available:", r.blackHole)
-    print("Passwordless PacketLogger:", r.passwordlessPacketLogger)
     print("Opus decoder:", OpusVoiceDecoder() != nil ? "ok" : "FAILED")
     print("---")
     print(r.checklistText)
@@ -49,7 +46,7 @@ if args.contains("--test-opus") {
     let pcm = decoder.feed(Data(bytes))
     print("parsed=\(OpusVoiceDecoder.parsePacket(Data(bytes)) != nil) samples=\(pcm.count)")
     if !pcm.isEmpty {
-        try? RemoteMicController.writeWAV(
+        try? PCMWaveWriter.write(
             samples: pcm,
             sampleRate: Int(OpusVoiceDecoder.sampleRate),
             to: URL(fileURLWithPath: "/tmp/hypervibe-opus-test.wav")
@@ -124,7 +121,7 @@ if args.contains("--replay-hci") {
     sem.wait()
     print("frames=\(capture.framesSeen) samples=\(samples.count)")
     if !samples.isEmpty {
-        try? RemoteMicController.writeWAV(
+        try? PCMWaveWriter.write(
             samples: samples,
             sampleRate: Int(OpusVoiceDecoder.sampleRate),
             to: URL(fileURLWithPath: "/tmp/hypervibe-replay.wav")

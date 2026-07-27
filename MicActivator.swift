@@ -18,8 +18,15 @@ final class MicActivator {
 
     /// Prefer devices already seized by `RemoteInputHandler` so SetReport is not
     /// rejected with `kIOReturnExclusiveAccess`.
+    ///
+    /// Does **not** toggle PushToTalk off first — HID reattach during an active
+    /// hold used to call `disarm()` and cut the mic stream mid-utterance.
     func useSharedDevices(_ devices: [IOHIDDevice]) {
-        disarm()
+        if ownsDevices {
+            for device in openDevices {
+                IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+            }
+        }
         openDevices = devices
         ownsDevices = false
         rmDebug("🎤 MicActivator using \(devices.count) shared HID device(s)")
@@ -80,9 +87,11 @@ final class MicActivator {
             for device in openDevices {
                 IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
             }
+            openDevices.removeAll()
+            ownsDevices = false
         }
-        openDevices.removeAll()
-        ownsDevices = false
+        // Shared devices (from RemoteInputHandler seize) must stay retained —
+        // clearing them made every rearm after the first Siri release a no-op.
     }
 
     private func sendEnable() {

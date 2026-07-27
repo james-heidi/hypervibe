@@ -24,6 +24,16 @@ mkdir -p "${APP_BUNDLE}/Contents/Resources"
 # Copy executable
 cp "$BINARY_NAME" "${APP_BUNDLE}/Contents/MacOS/$APP_NAME"
 
+# Bundle the one-shot privileged HCI helper (installed to LaunchDaemon on first use).
+if [ ! -f "HyperVibeHCIHelper" ]; then
+    echo "Error: HyperVibeHCIHelper not found. Build with ./build.sh first."
+    exit 1
+fi
+mkdir -p "${APP_BUNDLE}/Contents/Resources/Helpers"
+cp "HyperVibeHCIHelper" "${APP_BUNDLE}/Contents/Resources/Helpers/com.hypervibe.hcihelper"
+chmod 755 "${APP_BUNDLE}/Contents/Resources/Helpers/com.hypervibe.hcihelper"
+echo "Bundled HCI helper"
+
 # Copy icon if it exists
 if [ -f "HyperVibe.icns" ]; then
     cp "HyperVibe.icns" "${APP_BUNDLE}/Contents/Resources/HyperVibe.icns"
@@ -37,6 +47,22 @@ fi
 if [ -d "Resources" ]; then
     cp Resources/MenuBarIcon*.png "${APP_BUNDLE}/Contents/Resources/" 2>/dev/null || true
     echo "Menu bar icons added to app bundle"
+fi
+
+# Internal prototype: package Apple's locally installed PacketLogger so the DMG
+# has no separate Additional Tools installation step. The copied app remains
+# ignored by git because it only exists inside the generated HyperVibe.app.
+PACKETLOGGER_SOURCE="${PACKETLOGGER_APP:-/Applications/PacketLogger.app}"
+PACKETLOGGER_DEST="${APP_BUNDLE}/Contents/Resources/Tools/PacketLogger.app"
+rm -rf "${APP_BUNDLE}/Contents/Resources/Tools"
+if [ -d "$PACKETLOGGER_SOURCE" ]; then
+    mkdir -p "${APP_BUNDLE}/Contents/Resources/Tools"
+    ditto "$PACKETLOGGER_SOURCE" "$PACKETLOGGER_DEST"
+    echo "Bundled PacketLogger from $PACKETLOGGER_SOURCE"
+else
+    echo "Error: PacketLogger.app not found at $PACKETLOGGER_SOURCE"
+    echo "Set PACKETLOGGER_APP=/path/to/PacketLogger.app to build this internal prototype."
+    exit 1
 fi
 
 # Create proper Info.plist with all required keys
@@ -76,8 +102,6 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" <<EOF
 	<string>HyperVibe needs Bluetooth access to connect to your Siri Remote trackpad.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>HyperVibe needs Bluetooth access to connect to your Siri Remote trackpad.</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>HyperVibe uses your local network to connect to the iPhone remote.</string>
 </dict>
 </plist>
 EOF
@@ -96,10 +120,15 @@ if ! security find-identity -p codesigning -v | grep -q "$SIGN_IDENTITY"; then
 fi
 if [ -f "HyperVibe.entitlements" ]; then
     echo "Signing with hardened runtime + entitlements (identity: $SIGN_IDENTITY)..."
+    # Sign the nested helper first so deep verification succeeds.
+    codesign --force --options=runtime \
+        --sign "$SIGN_IDENTITY" \
+        "${APP_BUNDLE}/Contents/Resources/Helpers/com.hypervibe.hcihelper"
     codesign --force --options=runtime \
         --entitlements "HyperVibe.entitlements" \
         --sign "$SIGN_IDENTITY" \
         "${APP_BUNDLE}"
+    codesign --verify --deep --strict "${APP_BUNDLE}"
     codesign -dvv "${APP_BUNDLE}" 2>&1 | grep -E "(flags|Identifier|Authority)" || true
 fi
 

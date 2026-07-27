@@ -7,7 +7,123 @@
 
 import AppKit
 import Carbon.HIToolbox
-import CoreImage
+
+extension NSAlert {
+    /// Build an alert without the menu-bar app's placeholder icon.
+    static func hyperVibeAlert() -> NSAlert {
+        NSAlert()
+    }
+
+    /// NSAlert reserves a large top row for its icon even when the image is empty.
+    /// Render the configured alert as a compact modal panel instead.
+    @discardableResult
+    func runHyperVibeModal() -> NSApplication.ModalResponse {
+        HyperVibeAlertPanel(alert: self).runModal()
+    }
+}
+
+private final class HyperVibeAlertPanel: NSObject {
+    private let alert: NSAlert
+    private var panel: NSPanel!
+
+    init(alert: NSAlert) {
+        self.alert = alert
+    }
+
+    func runModal() -> NSApplication.ModalResponse {
+        panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 180),
+            styleMask: [.titled, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.isMovable = false
+        panel.isReleasedWhenClosed = false
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
+
+        let content = NSView()
+        panel.contentView = content
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 20),
+            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
+        ])
+
+        if !alert.messageText.isEmpty {
+            let title = NSTextField(labelWithString: alert.messageText)
+            title.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+            stack.addArrangedSubview(title)
+        }
+
+        if !alert.informativeText.isEmpty {
+            let detail = NSTextField(wrappingLabelWithString: alert.informativeText)
+            detail.font = .systemFont(ofSize: NSFont.systemFontSize)
+            detail.maximumNumberOfLines = 0
+            stack.addArrangedSubview(detail)
+            detail.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+
+        if let accessory = alert.accessoryView {
+            stack.addArrangedSubview(accessory)
+            accessory.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+
+        let buttonStack = NSStackView()
+        buttonStack.orientation = .horizontal
+        buttonStack.alignment = .centerY
+        buttonStack.distribution = .fillEqually
+        buttonStack.spacing = 8
+        buttonStack.translatesAutoresizingMaskIntoConstraints = false
+
+        for (index, source) in alert.buttons.enumerated().reversed() {
+            let button = NSButton(
+                title: source.title,
+                target: self,
+                action: #selector(buttonPressed(_:))
+            )
+            button.bezelStyle = .rounded
+            button.tag = index
+            if index == 0 {
+                button.keyEquivalent = "\r"
+            } else if index == 1 {
+                button.keyEquivalent = "\u{1b}"
+            }
+            buttonStack.addArrangedSubview(button)
+            button.widthAnchor.constraint(greaterThanOrEqualToConstant: 90).isActive = true
+        }
+        stack.addArrangedSubview(buttonStack)
+        buttonStack.trailingAnchor.constraint(equalTo: stack.trailingAnchor).isActive = true
+
+        content.layoutSubtreeIfNeeded()
+        let height = max(130, stack.fittingSize.height + 40)
+        panel.setContentSize(NSSize(width: 360, height: height))
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        let response = NSApp.runModal(for: panel)
+        panel.orderOut(nil)
+        return response
+    }
+
+    @objc private func buttonPressed(_ sender: NSButton) {
+        let rawValue = NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + sender.tag
+        NSApp.stopModal(withCode: NSApplication.ModalResponse(rawValue: rawValue))
+    }
+}
 
 // Button actions that can be assigned
 enum ButtonAction: String, CaseIterable {
@@ -24,6 +140,10 @@ enum ButtonAction: String, CaseIterable {
     case rightOpt = "Right Option: 3rd-party Voice Dictation"
     case f13Key = "F13: Custom Dictation Key"
     case trackpadClick = "Mouse Click"
+    case volumeUp = "Volume Up"
+    case volumeDown = "Volume Down"
+    case mute = "Mute"
+    case playPause = "Play/Pause"
     case none = "None"
 
     var displayName: String {
@@ -41,7 +161,30 @@ enum ButtonAction: String, CaseIterable {
         case .rightOpt: return "右 Option:第三方语音听写"
         case .f13Key: return "F13:自定义听写键"
         case .trackpadClick: return "鼠标点击"
+        case .volumeUp: return "音量 +"
+        case .volumeDown: return "音量 −"
+        case .mute: return "静音"
+        case .playPause: return "播放/暂停"
         case .none: return "无"
+        }
+    }
+
+    /// System media action that matches a physical Siri Remote button.
+    /// Shown only in that button's mapping submenu (音量 + → 音量 +, etc.).
+    static func nativeMediaAction(forButton key: String) -> ButtonAction? {
+        switch key {
+        case "volumeUp": return .volumeUp
+        case "volumeDown": return .volumeDown
+        case "mute": return .mute
+        case "playPause": return .playPause
+        default: return nil
+        }
+    }
+
+    var isSystemMediaKey: Bool {
+        switch self {
+        case .volumeUp, .volumeDown, .mute, .playPause: return true
+        default: return false
         }
     }
 
@@ -55,20 +198,11 @@ enum ButtonAction: String, CaseIterable {
         }
     }
 
-    /// Fixed allowlist for the iPhone remote. The phone sends semantic action IDs;
-    /// raw virtual key codes are never accepted over the network.
-    static func remoteAction(for actionID: String, pushToTalkAction: ButtonAction) -> ButtonAction? {
-        switch actionID {
-        case "esc": return .escKey
-        case "enter": return .enterKey
-        case "up": return .upKey
-        case "down": return .downKey
-        case "left": return .leftKey
-        case "right": return .rightKey
-        case "backspace": return .backspace
-        case "ctrlC": return .ctrlC
-        case "talk": return pushToTalkAction.requiresHold ? pushToTalkAction : nil
-        default: return nil
+    /// Legacy third-party dictation hotkeys, hidden from Siri Remote mappings.
+    var isVoiceDictationKey: Bool {
+        switch self {
+        case .spaceKey, .rightCmd, .rightOpt, .f13Key: return true
+        default: return false
         }
     }
 }
@@ -76,78 +210,9 @@ enum ButtonAction: String, CaseIterable {
 /// HID buttons whose driver emits both press (value=1) and release (value=0) — verified via /tmp/hypervibe.log.
 /// menu/tv/select are excluded: menu/tv are press-only on the Siri Remote, select is handled separately for click/drag.
 let holdCapableButtons: Set<String> = [
-    "playPause", "volumeUp", "volumeDown", "siri",
+    "playPause", "volumeUp", "volumeDown",
     "ringUp", "ringDown", "ringLeft", "ringRight", "mute",
 ]
-
-/// Trackpad swipe directions (single-finger flicks). Detection happens in TouchHandler;
-/// execution is dispatched here so mappings live alongside button mappings.
-enum SwipeDirection: String, CaseIterable {
-    case up, down, left, right
-}
-
-/// Action a swipe can trigger. Slash-command cases type the raw value (without Enter — user
-/// presses Enter themselves). `leftArrow`/`rightArrow` send virtual arrow keys instead of text.
-/// `init` is a Swift keyword so the case name is backtick-escaped. Raw values remain stable for
-/// persistence and typing; `displayName` is used only for menu presentation.
-enum SwipeAction: String, CaseIterable {
-    // Priority order: direction-matched arrow (filtered per submenu), then Mode Switching,
-    // then ultrathink, then slash commands alphabetically, None last.
-    case leftArrow     = "Left: Navigate Left"
-    case rightArrow    = "Right: Navigate Right"
-    case modeSwitch    = "Mode Switching (Shift + Tab)"
-    case ultrathink    = "ultrathink"
-    case btw           = "/btw"
-    case compact       = "/compact"
-    case config        = "/config"
-    case context       = "/context"
-    case effort        = "/effort"
-    case `init`        = "/init"
-    case model         = "/model"
-    case remoteControl = "/remote-control"
-    case schedule      = "/schedule"
-    case tasks         = "/tasks"
-    case usage         = "/usage"
-    case none          = "None"
-
-    var displayName: String {
-        switch self {
-        case .leftArrow: return "左:向左导航"
-        case .rightArrow: return "右:向右导航"
-        case .modeSwitch: return "模式切换 (Shift + Tab)"
-        case .ultrathink: return "ultrathink"
-        case .btw: return "/btw"
-        case .compact: return "/compact"
-        case .config: return "/config"
-        case .context: return "/context"
-        case .effort: return "/effort"
-        case .`init`: return "/init"
-        case .model: return "/model"
-        case .remoteControl: return "/remote-control"
-        case .schedule: return "/schedule"
-        case .tasks: return "/tasks"
-        case .usage: return "/usage"
-        case .none: return "无"
-        }
-    }
-
-    /// Fixed semantic allowlist for tap actions from the iPhone remote.
-    /// The phone never supplies text, key codes, or shortcut flags.
-    static func remoteAction(for actionID: String) -> SwipeAction? {
-        switch actionID {
-        case "cmd_model": return .model
-        case "cmd_compact": return .compact
-        case "cmd_usage": return .usage
-        case "cmd_context": return .context
-        case "cmd_effort": return .effort
-        case "cmd_tasks": return .tasks
-        case "cmd_init": return .`init`
-        case "kw_ultrathink": return .ultrathink
-        case "mode_switch": return .modeSwitch
-        default: return nil
-        }
-    }
-}
 
 // Scroll speed options
 enum ScrollSpeed: String, CaseIterable {
@@ -164,38 +229,25 @@ enum ScrollSpeed: String, CaseIterable {
     }
 }
 
-class MenuBarManager {
-    private static let remoteTalkActionDefaultsKey = "remoteTalkAction"
+class MenuBarManager: NSObject, NSMenuDelegate {
     private static let trackpadControlEnabledDefaultsKey = "trackpadControlEnabled"
-    private static let remoteTalkChoices: [(action: ButtonAction, title: String)] = [
-        (.spaceKey, "空格"),
-        (.rightCmd, "右 Command"),
-        (.rightOpt, "右 Option"),
-        (.f13Key, "F13"),
-    ]
+    private enum MenuTag {
+        static let parakeetEngine = 91001
+        static let downloadProgress = 91002
+        static let cancelDownload = 91003
+        static let engineSubmenu = 91004
+    }
     
     private let statusItem: NSStatusItem
     private let menu: NSMenu
     private let statusMenuItem: NSMenuItem
-    private var remoteServerEnabled = false
-    private var remoteServerURL: String?
-    private var remoteServerQRCode: NSImage?
-    private var remoteServerError: String?
-    private var remoteTalkAction: ButtonAction = .spaceKey
+    private var remoteConnected = false
+    private var menuIsOpen = false
+    private var rebuildAfterMenuCloses = false
     private(set) var trackpadControlEnabled = true
     
     // Button mappings (stored in UserDefaults)
     private var buttonMappings: [String: ButtonAction] = [:]
-
-    // Swipe gesture mappings (stored in UserDefaults under "swipeMappings").
-    private var swipeMappings: [SwipeDirection: SwipeAction] = [:]
-
-    private static let defaultSwipeMappings: [SwipeDirection: SwipeAction] = [
-        .up:    .usage,
-        .down:  .compact,
-        .left:  .model,
-        .right: .modeSwitch,
-    ]
 
     // Scroll speed (used for trackpad scroll scale; no menu, native multitouch)
     private(set) var scrollSpeed: ScrollSpeed = .medium
@@ -203,25 +255,26 @@ class MenuBarManager {
     /// Set by app delegate so menu bar can delegate media actions to MediaController.
     var mediaController: MediaController?
 
-    /// Set by AppDelegate after RemoteWebServer is created.
-    var onRemoteServerToggle: ((Bool) -> Void)?
-
     /// Set by AppDelegate to update touch and physical-click handling immediately.
     var onTrackpadControlToggle: ((Bool) -> Void)?
 
-    /// Set by AppDelegate for the A2854 remote-mic toggle.
-    var onRemoteMicToggle: ((Bool) -> Void)?
-    var remoteMicEnabled = false
-    private var remoteMicStatusText = "遥控器麦克风"
+    /// Dictation is always on; AppDelegate ensures helper + capture after install/launch.
+    var onEnsureDictationEnabled: (() -> Void)?
+    var onTranscriptionEngineChange: ((TranscriptionEngineID) -> Void)?
+    var onOpenAIKeySave: ((String) -> Void)?
+    var onParakeetDownload: (() -> Void)?
+    var onParakeetDownloadCancel: (() -> Void)?
+    var remoteMicEnabled = true
+    var selectedTranscriptionEngine: TranscriptionEngineID = .parakeet
+    var transcriptionEngineStatus = TranscriptionEngineState.idle
 
     init(statusItem: NSStatusItem) {
         self.statusItem = statusItem
         self.menu = NSMenu()
-        self.statusMenuItem = NSMenuItem(title: "状态:未连接", action: nil, keyEquivalent: "")
+        self.statusMenuItem = NSMenuItem(title: "未连接", action: nil, keyEquivalent: "")
+        super.init()
         
         loadMappings()
-        loadSwipeMappings()
-        loadRemoteTalkAction()
         loadTrackpadControlEnabled()
         setupMenuBar()
     }
@@ -234,18 +287,6 @@ class MenuBarManager {
         trackpadControlEnabled = defaults.bool(forKey: Self.trackpadControlEnabledDefaultsKey)
     }
 
-    private func loadRemoteTalkAction() {
-        let defaults = UserDefaults.standard
-        if let rawValue = defaults.string(forKey: Self.remoteTalkActionDefaultsKey),
-           let action = ButtonAction(rawValue: rawValue),
-           Self.remoteTalkChoices.contains(where: { $0.action == action }) {
-            remoteTalkAction = action
-        } else {
-            remoteTalkAction = .spaceKey
-            defaults.set(remoteTalkAction.rawValue, forKey: Self.remoteTalkActionDefaultsKey)
-        }
-    }
-    
     private func loadMappings() {
         // Default mappings (only used on first launch / after schema upgrade)
         let defaultMappings: [String: ButtonAction] = [
@@ -259,7 +300,6 @@ class MenuBarManager {
             "volumeUp": .upKey,
             "volumeDown": .downKey,
             "mute": .none,
-            "siri": .spaceKey,
             "tv": .ctrlC
         ]
 
@@ -267,14 +307,28 @@ class MenuBarManager {
         //   v3: old media-key actions removed — drop all saved button mappings
         //   v4: "select" default changed from .enterKey to .trackpadClick — reset just that entry
         //   v5: A2854 click-ring and Mute defaults added via the missing-key merge below
-        let currentSchema = 5
+        //   v6: Siri is reserved exclusively for push-to-talk and removed from mappings
+        //   v7: hide third-party voice-dictation hotkeys from Siri Remote button mappings
+        let currentSchema = 7
         let savedSchema = UserDefaults.standard.integer(forKey: "buttonMappingsSchema")
         if savedSchema < 3 {
             UserDefaults.standard.removeObject(forKey: "buttonMappings")
-        } else if savedSchema < 4 {
-            // Targeted migration: reset "select" so the new default applies, preserve others.
+        } else {
             if var saved = UserDefaults.standard.dictionary(forKey: "buttonMappings") as? [String: String] {
-                saved.removeValue(forKey: "select")
+                if savedSchema < 4 {
+                    // Targeted migration: reset "select" so the new default applies.
+                    saved.removeValue(forKey: "select")
+                }
+                if savedSchema < 6 {
+                    saved.removeValue(forKey: "siri")
+                }
+                if savedSchema < 7 {
+                    for (button, raw) in saved {
+                        if let action = ButtonAction(rawValue: raw), action.isVoiceDictationKey {
+                            saved[button] = ButtonAction.none.rawValue
+                        }
+                    }
+                }
                 UserDefaults.standard.set(saved, forKey: "buttonMappings")
             }
         }
@@ -292,6 +346,11 @@ class MenuBarManager {
                 if buttonMappings[button] == nil {
                     buttonMappings[button] = action
                 }
+            }
+            buttonMappings.removeValue(forKey: "siri")
+            // Clear any leftover third-party dictation hotkeys from physical buttons.
+            for (button, action) in buttonMappings where action.isVoiceDictationKey {
+                buttonMappings[button] = ButtonAction.none
             }
             // Defensive: if a hold-required action got persisted against a tap-only button, reset to none.
             for (button, action) in buttonMappings where action.requiresHold && !holdCapableButtons.contains(button) {
@@ -365,32 +424,127 @@ class MenuBarManager {
         button.image = Self.makeWaveIcon()
         button.title = ""
         
+        menu.delegate = self
         rebuildMenu()
         statusItem.menu = menu
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === self.menu else { return }
+        menuIsOpen = true
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        guard menu === self.menu else { return }
+        menuIsOpen = false
+        if rebuildAfterMenuCloses {
+            rebuildAfterMenuCloses = false
+            rebuildMenu()
+        }
+    }
+
+    /// Prefer this over `rebuildMenu()` while the status menu may be open.
+    func requestMenuRebuild() {
+        if menuIsOpen {
+            rebuildAfterMenuCloses = true
+            return
+        }
+        rebuildMenu()
     }
     
     private func rebuildMenu() {
         menu.removeAllItems()
-        
-        // Title
-        let titleItem = NSMenuItem(title: "Siri 遥控器", action: nil, keyEquivalent: "")
-        titleItem.isEnabled = false
-        menu.addItem(titleItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        
-        // Status
+
+        statusMenuItem.title = remoteConnected ? "已连接 ✓" : "未连接"
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
+        menu.addItem(NSMenuItem.separator())
 
-        let micToggle = NSMenuItem(
-            title: remoteMicStatusText,
-            action: #selector(toggleRemoteMic(_:)),
+        let engineItem = NSMenuItem(title: engineMenuTitle(), action: nil, keyEquivalent: "")
+        engineItem.tag = MenuTag.engineSubmenu
+        let engineMenu = NSMenu()
+        for engineID in TranscriptionEngineID.allCases {
+            var title = engineID.displayName
+            if engineID == .parakeet {
+                if case .downloading(let p) = transcriptionEngineStatus, selectedTranscriptionEngine == .parakeet {
+                    title += String(format: "（下载中 %.0f%%）", p * 100)
+                } else if !ParakeetTranscriptionEngine.modelsCached {
+                    title += "（下载…）"
+                }
+            } else if engineID == .openAI && !TranscriptionKeychain.hasOpenAIKey {
+                title += "（需 Key）"
+            }
+            let item = NSMenuItem(
+                title: title,
+                action: #selector(selectTranscriptionEngine(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = engineID.rawValue
+            item.state = selectedTranscriptionEngine == engineID ? .on : .off
+            if engineID == .parakeet {
+                item.tag = MenuTag.parakeetEngine
+            }
+            engineMenu.addItem(item)
+        }
+        engineMenu.addItem(NSMenuItem.separator())
+        let openAIKeyItem = NSMenuItem(
+            title: TranscriptionKeychain.hasOpenAIKey ? "更换 OpenAI API Key…" : "设置 OpenAI API Key…",
+            action: #selector(promptOpenAIKey(_:)),
             keyEquivalent: ""
         )
-        micToggle.target = self
-        micToggle.state = remoteMicEnabled ? .on : .off
-        menu.addItem(micToggle)
+        openAIKeyItem.target = self
+        engineMenu.addItem(openAIKeyItem)
+
+        let modelMenu = NSMenu()
+        for model in TranscriptionEngineID.openAIModelChoices {
+            let item = NSMenuItem(
+                title: model,
+                action: #selector(selectOpenAIModel(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = model
+            item.state = TranscriptionEngineID.openAIModel == model ? .on : .off
+            modelMenu.addItem(item)
+        }
+        let modelItem = NSMenuItem(title: "OpenAI 模型", action: nil, keyEquivalent: "")
+        modelItem.submenu = modelMenu
+        engineMenu.addItem(modelItem)
+
+        if case .downloading(let p) = transcriptionEngineStatus, selectedTranscriptionEngine == .parakeet {
+            let progress = NSMenuItem(
+                title: String(format: "Parakeet 下载中 %.0f%%", p * 100),
+                action: nil,
+                keyEquivalent: ""
+            )
+            progress.isEnabled = false
+            progress.tag = MenuTag.downloadProgress
+            engineMenu.addItem(progress)
+
+            let cancel = NSMenuItem(
+                title: "取消 Parakeet 下载",
+                action: #selector(cancelParakeetDownload(_:)),
+                keyEquivalent: ""
+            )
+            cancel.target = self
+            cancel.tag = MenuTag.cancelDownload
+            engineMenu.addItem(cancel)
+        }
+
+        engineItem.submenu = engineMenu
+        menu.addItem(engineItem)
+
+        // One-shot install only — once ready, no status line (noise).
+        if !HCIHelperClient.isReady() {
+            let helperItem = NSMenuItem(
+                title: "安装麦克风组件（一次性）…",
+                action: #selector(installOrManageHCIHelper(_:)),
+                keyEquivalent: ""
+            )
+            helperItem.target = self
+            menu.addItem(helperItem)
+        }
         
         menu.addItem(NSMenuItem.separator())
         
@@ -406,10 +560,9 @@ class MenuBarManager {
             ("ringRight", "环右"),
             ("menu", "返回键 ‹"),
             ("tv", "TV 键"),
-            ("siri", "Siri 键"),
             ("playPause", "播放/暂停"),
-            ("volumeUp", "音量+"),
-            ("volumeDown", "音量−"),
+            ("volumeUp", "音量 +"),
+            ("volumeDown", "音量 −"),
             ("mute", "静音键"),
         ]
         
@@ -424,6 +577,12 @@ class MenuBarManager {
                 if action.requiresHold && action != .backspace && !canHold { continue }
                 // Mouse Click is only meaningful for the trackpad click button.
                 if action == .trackpadClick && key != "select" { continue }
+                // Siri Remote push-to-talk is handled by the mic pipeline.
+                if action.isVoiceDictationKey { continue }
+                // Native media actions only appear on their matching physical button.
+                if action.isSystemMediaKey, action != ButtonAction.nativeMediaAction(forButton: key) {
+                    continue
+                }
 
                 let actionItem = NSMenuItem(title: action.displayName, action: #selector(changeMapping(_:)), keyEquivalent: "")
                 actionItem.target = self
@@ -443,110 +602,14 @@ class MenuBarManager {
         mappingsItem.submenu = mappingsSubmenu
         menu.addItem(mappingsItem)
 
-        // Swipe Gestures submenu
-        let swipeItem = NSMenuItem(title: "滑动手势", action: nil, keyEquivalent: "")
-        let swipeSubmenu = NSMenu()
-        let swipes: [(SwipeDirection, String)] = [
-            (.up,    "上滑"),
-            (.down,  "下滑"),
-            (.left,  "左滑"),
-            (.right, "右滑"),
-        ]
-        for (direction, label) in swipes {
-            let dirItem = NSMenuItem(title: label, action: nil, keyEquivalent: "")
-            let actionsMenu = NSMenu()
-            for action in SwipeAction.allCases {
-                // Each arrow-key action only appears on its matching swipe direction.
-                if action == .leftArrow  && direction != .left  { continue }
-                if action == .rightArrow && direction != .right { continue }
-
-                let actionItem = NSMenuItem(title: action.displayName, action: #selector(changeSwipeMapping(_:)), keyEquivalent: "")
-                actionItem.target = self
-                actionItem.representedObject = (direction, action)
-                if swipeMappings[direction] == action {
-                    actionItem.state = .on
-                }
-                actionsMenu.addItem(actionItem)
-            }
-            dirItem.submenu = actionsMenu
-            swipeSubmenu.addItem(dirItem)
-        }
-        swipeItem.submenu = swipeSubmenu
-        menu.addItem(swipeItem)
-
         let trackpadControlItem = NSMenuItem(
-            title: "触控板控制鼠标",
+            title: "触控板鼠标",
             action: #selector(toggleTrackpadControl(_:)),
             keyEquivalent: ""
         )
         trackpadControlItem.target = self
         trackpadControlItem.state = trackpadControlEnabled ? .on : .off
         menu.addItem(trackpadControlItem)
-
-        // iPhone Remote submenu
-        let remoteItem = NSMenuItem(title: "iPhone 遥控", action: nil, keyEquivalent: "")
-        let remoteSubmenu = NSMenu()
-
-        let enabledItem = NSMenuItem(
-            title: "启用",
-            action: #selector(toggleRemoteServer(_:)),
-            keyEquivalent: ""
-        )
-        enabledItem.target = self
-        enabledItem.state = remoteServerEnabled ? .on : .off
-        remoteSubmenu.addItem(enabledItem)
-
-        let talkKeyItem = NSMenuItem(title: "按住说话键", action: nil, keyEquivalent: "")
-        let talkKeySubmenu = NSMenu()
-        for choice in Self.remoteTalkChoices {
-            let choiceItem = NSMenuItem(
-                title: choice.title,
-                action: #selector(changeRemoteTalkAction(_:)),
-                keyEquivalent: ""
-            )
-            choiceItem.target = self
-            choiceItem.representedObject = choice.action
-            choiceItem.state = remoteTalkAction == choice.action ? .on : .off
-            talkKeySubmenu.addItem(choiceItem)
-        }
-        talkKeyItem.submenu = talkKeySubmenu
-        remoteSubmenu.addItem(talkKeyItem)
-
-        if remoteServerEnabled {
-            if let url = remoteServerURL {
-                let urlItem = NSMenuItem(
-                    title: "连接: \(url)",
-                    action: #selector(copyRemoteServerURL(_:)),
-                    keyEquivalent: ""
-                )
-                urlItem.target = self
-                urlItem.toolTip = "点击复制 iPhone 遥控连接地址"
-                remoteSubmenu.addItem(urlItem)
-
-                if let qrCode = remoteServerQRCode {
-                    let qrItem = NSMenuItem(
-                        title: "iPhone 相机扫码连接",
-                        action: #selector(copyRemoteServerURL(_:)),
-                        keyEquivalent: ""
-                    )
-                    qrItem.target = self
-                    qrItem.image = qrCode
-                    qrItem.toolTip = "扫码连接，或点击复制地址"
-                    remoteSubmenu.addItem(qrItem)
-                }
-            } else if let error = remoteServerError {
-                let errorItem = NSMenuItem(title: "不可用: \(error)", action: nil, keyEquivalent: "")
-                errorItem.isEnabled = false
-                remoteSubmenu.addItem(errorItem)
-            } else {
-                let startingItem = NSMenuItem(title: "启动中…", action: nil, keyEquivalent: "")
-                startingItem.isEnabled = false
-                remoteSubmenu.addItem(startingItem)
-            }
-        }
-
-        remoteItem.submenu = remoteSubmenu
-        menu.addItem(remoteItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -565,41 +628,16 @@ class MenuBarManager {
         rebuildMenu()
     }
 
-    @objc private func changeSwipeMapping(_ sender: NSMenuItem) {
-        guard let (direction, action) = sender.representedObject as? (SwipeDirection, SwipeAction) else {
-            return
-        }
-        swipeMappings[direction] = action
-        saveSwipeMappings()
-        rebuildMenu()
-    }
-
-    @objc private func changeRemoteTalkAction(_ sender: NSMenuItem) {
-        guard let action = sender.representedObject as? ButtonAction,
-              Self.remoteTalkChoices.contains(where: { $0.action == action }) else { return }
-        remoteTalkAction = action
-        UserDefaults.standard.set(action.rawValue, forKey: Self.remoteTalkActionDefaultsKey)
-        rebuildMenu()
-    }
-    
     func updateConnectionStatus(connected: Bool) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.statusMenuItem.title = connected ? "状态:已连接 ✓" : "状态:未连接"
+            let changed = self.remoteConnected != connected
+            self.remoteConnected = connected
+            self.statusMenuItem.title = connected ? "已连接 ✓" : "未连接"
             self.statusItem.button?.appearsDisabled = !connected
-        }
-    }
-
-    func updateRemoteServerStatus(enabled: Bool, connectURL: String?, error: String?) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.remoteServerEnabled = enabled
-            if connectURL != self.remoteServerURL {
-                self.remoteServerQRCode = connectURL.flatMap { Self.makeQRCode(for: $0) }
+            if changed {
+                self.requestMenuRebuild()
             }
-            self.remoteServerURL = connectURL
-            self.remoteServerError = error
-            self.rebuildMenu()
         }
     }
 
@@ -607,104 +645,187 @@ class MenuBarManager {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.remoteMicEnabled = enabled
-            let title: String
-            if !enabled {
-                title = "遥控器麦克风"
-            } else if statusText.contains("采集中") {
-                title = "遥控器麦克风 — 正在聆听"
-            } else {
-                title = "遥控器麦克风 — 已开启"
-            }
-            let needsRebuild = title != self.remoteMicStatusText || self.menu.items.contains(where: {
-                $0.action == #selector(self.toggleRemoteMic(_:)) && ($0.state == .on) != enabled
-            })
-            self.remoteMicStatusText = title
-            if needsRebuild {
-                self.rebuildMenu()
+            // Parent engine row already shows the selected engine; only refresh when
+            // listening/download state should update that title.
+            if let engineItem = self.menu.items.first(where: { $0.tag == MenuTag.engineSubmenu }) {
+                engineItem.title = self.engineMenuTitle(listening: statusText.contains("采集中")
+                    || statusText.contains("正在听写"))
             }
             _ = sinkName
         }
     }
 
-    @objc private func toggleRemoteMic(_ sender: NSMenuItem) {
-        if remoteMicEnabled {
-            remoteMicEnabled = false
-            onRemoteMicToggle?(false)
-            rebuildMenu()
-            return
+    private func engineMenuTitle(listening: Bool = false) -> String {
+        if case .downloading(let p) = transcriptionEngineStatus, selectedTranscriptionEngine == .parakeet {
+            return String(format: "%@（下载中 %.0f%%）", selectedTranscriptionEngine.displayName, p * 100)
         }
-        // Consumer path parked (durable capture spike FAIL). Developers who already
-        // have Lab tools can still enable; everyone else gets a short notice.
-        if RemoteMicLab.consumerMicParked && !RemoteMicLab.evaluate().isReady {
-            RemoteMicLab.presentUnavailableMessage()
-            rebuildMenu()
-            return
+        if listening {
+            return "\(selectedTranscriptionEngine.displayName) — 聆听中"
         }
-        if RemoteMicLab.consumerMicParked {
-            // Ready Lab machine: allow enable without exposing setup UI.
-            remoteMicEnabled = true
-            onRemoteMicToggle?(true)
-            rebuildMenu()
-            return
-        }
-        RemoteMicLab.presentUnavailableMessage()
+        return selectedTranscriptionEngine.displayName
     }
 
-    private static func makeQRCode(for value: String) -> NSImage? {
-        guard let data = value.data(using: .utf8),
-              let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
-        filter.setValue(data, forKey: "inputMessage")
-        filter.setValue("M", forKey: "inputCorrectionLevel")
+    func updateTranscriptionEngine(id: TranscriptionEngineID, state: TranscriptionEngineState) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let previousID = self.selectedTranscriptionEngine
+            let previousState = self.transcriptionEngineStatus
+            self.selectedTranscriptionEngine = id
+            self.transcriptionEngineStatus = state
 
-        let ciContext = CIContext(options: nil)
-        guard let output = filter.outputImage,
-              let source = ciContext.createCGImage(output, from: output.extent.integral) else {
-            return nil
+            let wasDownloading: Bool
+            if case .downloading = previousState { wasDownloading = true } else { wasDownloading = false }
+            let isDownloading: Bool
+            if case .downloading = state { isDownloading = true } else { isDownloading = false }
+
+            // Percent-only download updates: mutate titles, never tear down the menu tree.
+            if isDownloading {
+                if case .downloading(let p) = state {
+                    self.applyDownloadProgressInPlace(p)
+                }
+                // First transition into downloading may need progress/cancel rows.
+                if !wasDownloading {
+                    self.ensureDownloadItemsInPlace()
+                }
+                return
+            }
+
+            if let engineItem = self.menu.items.first(where: { $0.tag == MenuTag.engineSubmenu }) {
+                engineItem.title = self.engineMenuTitle()
+            }
+
+            let structural = previousID != id || wasDownloading || {
+                switch (previousState, state) {
+                case (.needsSetup, .ready), (.ready, .needsSetup),
+                     (.unavailable, .ready), (.ready, .unavailable),
+                     (.needsSetup, .unavailable), (.unavailable, .needsSetup),
+                     (.idle, _), (_, .idle):
+                    return true
+                default:
+                    return previousState != state
+                }
+            }()
+
+            if structural {
+                self.requestMenuRebuild()
+            }
         }
-
-        // Four modules provide the standard quiet zone. Scale by a whole number so
-        // every QR module remains aligned to exact pixels at approximately 180 pt.
-        let quietZoneModules = 4
-        let moduleWidth = source.width + quietZoneModules * 2
-        let scale = max(1, Int((180.0 / CGFloat(moduleWidth)).rounded()))
-        let imageWidth = moduleWidth * scale
-        let imageDimension = CGFloat(imageWidth)
-
-        guard let bitmap = CGContext(
-            data: nil,
-            width: imageWidth,
-            height: imageWidth,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
-
-        bitmap.setFillColor(NSColor.white.cgColor)
-        bitmap.fill(CGRect(x: 0, y: 0, width: imageDimension, height: imageDimension))
-        bitmap.interpolationQuality = .none
-        bitmap.setShouldAntialias(false)
-        let inset = CGFloat(quietZoneModules * scale)
-        bitmap.draw(source, in: CGRect(
-            x: inset,
-            y: inset,
-            width: CGFloat(source.width * scale),
-            height: CGFloat(source.height * scale)
-        ))
-
-        guard let image = bitmap.makeImage() else { return nil }
-        return NSImage(
-            cgImage: image,
-            size: NSSize(width: imageDimension, height: imageDimension)
-        )
     }
-    
+
+    private func engineSubmenu() -> NSMenu? {
+        menu.items.first(where: { $0.tag == MenuTag.engineSubmenu })?.submenu
+    }
+
+    private func applyDownloadProgressInPlace(_ fraction: Double) {
+        let percentTitle = String(format: "Parakeet（下载中 %.0f%%）", fraction * 100)
+        let progressTitle = String(format: "Parakeet 下载中 %.0f%%", fraction * 100)
+        if let engineItem = menu.items.first(where: { $0.tag == MenuTag.engineSubmenu }) {
+            engineItem.title = String(format: "%@（下载中 %.0f%%）",
+                                      TranscriptionEngineID.parakeet.displayName, fraction * 100)
+        }
+        if let item = engineSubmenu()?.item(withTag: MenuTag.parakeetEngine) {
+            item.title = percentTitle
+        }
+        if let progress = engineSubmenu()?.item(withTag: MenuTag.downloadProgress) {
+            progress.title = progressTitle
+        }
+    }
+
+    private func ensureDownloadItemsInPlace() {
+        guard let engineMenu = engineSubmenu() else {
+            requestMenuRebuild()
+            return
+        }
+        if engineMenu.item(withTag: MenuTag.downloadProgress) == nil {
+            let progress = NSMenuItem(title: "Parakeet 下载中 0%", action: nil, keyEquivalent: "")
+            progress.isEnabled = false
+            progress.tag = MenuTag.downloadProgress
+            engineMenu.addItem(progress)
+        }
+        if engineMenu.item(withTag: MenuTag.cancelDownload) == nil {
+            let cancel = NSMenuItem(
+                title: "取消 Parakeet 下载",
+                action: #selector(cancelParakeetDownload(_:)),
+                keyEquivalent: ""
+            )
+            cancel.target = self
+            cancel.tag = MenuTag.cancelDownload
+            engineMenu.addItem(cancel)
+        }
+    }
+
+    @objc private func selectTranscriptionEngine(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let id = TranscriptionEngineID(rawValue: raw) else { return }
+        selectedTranscriptionEngine = id
+        onTranscriptionEngineChange?(id)
+        if id == .parakeet && !ParakeetTranscriptionEngine.modelsCached {
+            onParakeetDownload?()
+            // Keep the open menu stable; progress updates patch titles in place.
+            ensureDownloadItemsInPlace()
+            return
+        } else if id == .openAI && !TranscriptionKeychain.hasOpenAIKey {
+            promptOpenAIKey(sender)
+        }
+        requestMenuRebuild()
+    }
+
+    @objc private func selectOpenAIModel(_ sender: NSMenuItem) {
+        guard let model = sender.representedObject as? String else { return }
+        TranscriptionEngineID.openAIModel = model
+        requestMenuRebuild()
+    }
+
+    @objc private func promptOpenAIKey(_ sender: NSMenuItem) {
+        let alert = NSAlert.hyperVibeAlert()
+        alert.messageText = "OpenAI API Key"
+        alert.informativeText = "Key 保存在本机 Keychain，仅用于遥控器听写上传。"
+        alert.alertStyle = .informational
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.placeholderString = "sk-..."
+        alert.accessoryView = field
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        if TranscriptionKeychain.hasOpenAIKey {
+            alert.addButton(withTitle: "清除 Key")
+        }
+        let response = alert.runHyperVibeModal()
+        if response == .alertFirstButtonReturn {
+            let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else { return }
+            onOpenAIKeySave?(key)
+            requestMenuRebuild()
+        } else if response == .alertThirdButtonReturn {
+            TranscriptionKeychain.deleteOpenAIKey()
+            requestMenuRebuild()
+        }
+    }
+
+    @objc private func cancelParakeetDownload(_ sender: NSMenuItem) {
+        onParakeetDownloadCancel?()
+    }
+
+    @objc private func installOrManageHCIHelper(_ sender: NSMenuItem) {
+        if HCIHelperClient.isReady() {
+            let alert = NSAlert.hyperVibeAlert()
+            alert.messageText = "麦克风组件"
+            alert.informativeText = "后台服务已安装。按 Siri 听写无需再输入管理员密码。\n\n如需卸载，可点「卸载…」。"
+            alert.addButton(withTitle: "好")
+            alert.addButton(withTitle: "卸载…")
+            if alert.runHyperVibeModal() == .alertSecondButtonReturn {
+                _ = HCIHelperClient.uninstallWithAdminPrompt()
+            }
+            requestMenuRebuild()
+            return
+        }
+        if RemoteMicLab.ensureHelperInstalled(presentUI: true) {
+            onEnsureDictationEnabled?()
+        }
+        requestMenuRebuild()
+    }
+
     func getMapping(for button: String) -> ButtonAction {
         return buttonMappings[button] ?? .none
-    }
-
-    func getRemoteTalkAction() -> ButtonAction {
-        remoteTalkAction
     }
     
     // Map HID codes to button names
@@ -730,63 +851,12 @@ class MenuBarManager {
         return action.rawValue
     }
     
-    private func loadSwipeMappings() {
-        if let saved = UserDefaults.standard.dictionary(forKey: "swipeMappings") as? [String: String] {
-            for (dirRaw, actionRaw) in saved {
-                if let dir = SwipeDirection(rawValue: dirRaw),
-                   let act = SwipeAction(rawValue: actionRaw) {
-                    swipeMappings[dir] = act
-                }
-            }
-        }
-        // Fill any missing directions with defaults.
-        for (dir, act) in Self.defaultSwipeMappings where swipeMappings[dir] == nil {
-            swipeMappings[dir] = act
-        }
-    }
-
-    private func saveSwipeMappings() {
-        var toSave: [String: String] = [:]
-        for (dir, act) in swipeMappings {
-            toSave[dir.rawValue] = act.rawValue
-        }
-        UserDefaults.standard.set(toSave, forKey: "swipeMappings")
-    }
-
-    func getSwipeMapping(for direction: SwipeDirection) -> SwipeAction {
-        return swipeMappings[direction] ?? .none
-    }
-
-    /// Execute the action bound to a swipe direction. Slash-command actions type text
-    /// (no Enter — user presses Enter themselves). Arrow/modifier actions send key events.
-    func executeSwipe(_ direction: SwipeDirection) {
-        let action = swipeMappings[direction] ?? SwipeAction.none
-        executeSwipeAction(action)
-    }
-
-    /// Shared execution path for configured swipes and allowlisted iPhone macro keys.
-    func executeSwipeAction(_ action: SwipeAction) {
-        switch action {
-        case .none:
-            break
-        case .leftArrow:
-            sendKey(kVK_LeftArrow)
-        case .rightArrow:
-            sendKey(kVK_RightArrow)
-        case .modeSwitch:
-            sendKey(kVK_Tab, flags: .maskShift)
-        case .btw, .schedule, .ultrathink:
-            // Trailing space: user typically continues with an argument or prose.
-            typeString(action.rawValue + " ")
-        case .compact, .config, .context, .effort, .`init`,
-             .model, .remoteControl, .tasks, .usage:
-            // No trailing space: these commands stand alone or open an interactive picker.
-            typeString(action.rawValue)
-        }
-    }
-
     /// Post the given string as a single keyboard event via `keyboardSetUnicodeString`.
     /// Works across terminals and most text fields; bypasses layout-specific key codes.
+    func typeDictationText(_ text: String) {
+        typeString(text)
+    }
+
     private func typeString(_ s: String) {
         let utf16 = Array(s.utf16)
         let count = utf16.count
@@ -839,6 +909,14 @@ class MenuBarManager {
             if trackpadControlEnabled {
                 performClick()
             }
+        case .volumeUp:
+            VolumeRevertGuard.shared.applyVolumeStep(1)
+        case .volumeDown:
+            VolumeRevertGuard.shared.applyVolumeStep(-1)
+        case .mute:
+            mediaController?.sendMediaKey(.mute)
+        case .playPause:
+            mediaController?.sendMediaKey(.playPause)
         }
     }
 
@@ -877,10 +955,6 @@ class MenuBarManager {
         up?.post(tap: .cghidEventTap)
     }
 
-    @objc private func toggleRemoteServer(_ sender: NSMenuItem) {
-        onRemoteServerToggle?(!remoteServerEnabled)
-    }
-
     @objc private func toggleTrackpadControl(_ sender: NSMenuItem) {
         trackpadControlEnabled.toggle()
         UserDefaults.standard.set(
@@ -891,12 +965,6 @@ class MenuBarManager {
         rebuildMenu()
     }
 
-    @objc private func copyRemoteServerURL(_ sender: NSMenuItem) {
-        guard let url = remoteServerURL else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(url, forType: .string)
-    }
-    
     @objc private func quitApp() {
         NSStatusBar.system.removeStatusItem(statusItem)
         NSApp.terminate(nil)

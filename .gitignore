@@ -2,6 +2,7 @@
 Remotastic
 Remotastic.app/
 HyperVibe
+HyperVibeHCIHelper
 Vendor/libopus/lib/*.a
 
 # Xcode

@@ -34,6 +34,17 @@ enum SystemVolume {
             mElement: kAudioObjectPropertyElementMain
         )
         AudioObjectSetPropertyData(deviceID, &addr, 0, nil, size, &v)
+
+        // Some devices ignore VirtualMainVolume and only honor per-channel scalars.
+        for element: UInt32 in 1...2 {
+            var chAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyVolumeScalar,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: element
+            )
+            var ch = v
+            AudioObjectSetPropertyData(deviceID, &chAddr, 0, nil, size, &ch)
+        }
     }
 
     static func defaultOutputDeviceID() -> AudioObjectID? {
@@ -51,20 +62,14 @@ enum SystemVolume {
 
 /// Reverts AVRCP-origin volume changes caused by the Siri Remote's volume buttons.
 ///
-/// Design: a CoreAudio listener continuously tracks system volume. It maintains a
-/// `baselineVolume` that lags real volume by `settleDelay` — any observed change stays
-/// provisional for that interval. If a remote volume HID press (`armFromRemoteButton()`)
-/// arrives during the settle window, we retroactively revert to the pre-change baseline.
-/// During a 500ms guard window after a press, further changes are reverted immediately.
-///
-/// Why lagged baseline: BT AVRCP can beat the HID callback to main. A plain snapshot-on-
-/// press approach captures the post-change volume and has nothing to revert to. By holding
-/// changes provisional for ~150ms, the HID press still has time to claim the change.
-///
-/// Keyboard/other-origin volume changes (outside a guard window with no close HID press)
-/// pass through normally — after `settleDelay` they become the new baseline.
+/// The Siri Remote also sends BT AVRCP absolute-volume. That path writes below our
+/// event taps and will snap the Mac back to the remote's notion of level unless we
+/// actively hold our target for a while after each intentional step.
 final class VolumeRevertGuard {
     static let shared = VolumeRevertGuard()
+
+    /// One keyboard volume step ≈ 1/16 of full scale on macOS.
+    private static let stepSize: Float = 1.0 / 16.0
 
     private var baselineVolume: Float?
     private var guardUntil: Date = .distantPast
@@ -73,6 +78,14 @@ final class VolumeRevertGuard {
     private var pendingSettle: DispatchWorkItem?
     private var listenerInstalled = false
     private var listenerDeviceID: AudioObjectID = 0
+    /// Skip revert while we intentionally write volume (our own set echoes to the listener).
+    private var ignoringListener = false
+
+    /// After a native volume step, keep re-asserting this level against AVRCP snaps.
+    private var stickyTarget: Float?
+    private var stickyUntil: Date = .distantPast
+    private var stickyTimer: DispatchSourceTimer?
+    private let stickyHold: TimeInterval = 2.0
 
     /// Install the CoreAudio listener and capture the starting baseline at app launch,
     /// so the first remote volume press has something to revert to.
@@ -88,12 +101,63 @@ final class VolumeRevertGuard {
     /// volume change landed in the last `settleDelay` ms, reverts it retroactively — this
     /// handles the common case where AVRCP beats HID to the main thread.
     func armFromRemoteButton() {
+        ensureListener()
         guardUntil = Date().addingTimeInterval(guardWindow)
         if pendingSettle != nil, let baselineValue = baselineVolume {
             pendingSettle?.cancel()
             pendingSettle = nil
-            SystemVolume.set(baselineValue)
+            writeVolume(baselineValue)
         }
+    }
+
+    /// Apply a real CoreAudio volume step and hold it against AVRCP absolute-volume snaps.
+    func applyVolumeStep(_ steps: Int) {
+        ensureListener()
+        pendingSettle?.cancel()
+        pendingSettle = nil
+
+        // Prefer the live level so we don't step from a stale baseline after an AVRCP fight.
+        let actual = SystemVolume.get() ?? baselineVolume ?? 0.5
+        let next = max(0, min(1, actual + Float(steps) * Self.stepSize))
+        baselineVolume = next
+        stickyTarget = next
+        stickyUntil = Date().addingTimeInterval(stickyHold)
+        guardUntil = stickyUntil
+
+        writeVolume(next)
+        startStickyHold(target: next)
+        rmDebug("🔊 applyVolumeStep \(steps): \(String(format: "%.3f", actual)) → \(String(format: "%.3f", next))")
+    }
+
+    private func startStickyHold(target: Float) {
+        stickyTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        // Hammer the target for stickyHold — AVRCP absolute packets arrive for ~1s+.
+        timer.schedule(deadline: .now() + 0.03, repeating: 0.05)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            guard Date() < self.stickyUntil else {
+                self.stickyTimer?.cancel()
+                self.stickyTimer = nil
+                self.stickyTarget = nil
+                // Re-sync baseline to whatever actually stuck.
+                self.baselineVolume = SystemVolume.get() ?? target
+                rmDebug("🔊 sticky hold ended; baseline=\(self.baselineVolume.map { String(format: "%.3f", $0) } ?? "nil")")
+                return
+            }
+            if let current = SystemVolume.get(), abs(current - target) > 0.001 {
+                rmDebug("🔊 sticky reassert \(String(format: "%.3f", current)) → \(String(format: "%.3f", target))")
+                self.writeVolume(target)
+            }
+        }
+        stickyTimer = timer
+        timer.resume()
+    }
+
+    private func writeVolume(_ volume: Float) {
+        ignoringListener = true
+        SystemVolume.set(volume)
+        ignoringListener = false
     }
 
     private func ensureListener() {
@@ -113,15 +177,25 @@ final class VolumeRevertGuard {
     }
 
     private func onVolumeChanged() {
+        if ignoringListener { return }
         guard let current = SystemVolume.get() else {
             rmDebug("🔊 listener fired but SystemVolume.get() returned nil")
             return
         }
+
+        // Native volume sticky hold owns the level; don't run the remapped-button revert path.
+        if let target = stickyTarget, Date() < stickyUntil {
+            if abs(current - target) > 0.001 {
+                rmDebug("🔊 sticky listener reassert \(String(format: "%.3f", current)) → \(String(format: "%.3f", target))")
+                writeVolume(target)
+            }
+            return
+        }
+
         let baselineStr = baselineVolume.map { String(format: "%.3f", $0) } ?? "nil"
         let inWindow = Date() < guardUntil
         rmDebug("🔊 listener: current=\(String(format: "%.3f", current)) baseline=\(baselineStr) inGuard=\(inWindow)")
 
-        // Our own revert write echoes back as a listener callback; noop when it matches.
         if let baseline = baselineVolume, abs(current - baseline) < 0.001 {
             rmDebug("🔊 listener: match baseline, noop")
             return
@@ -129,7 +203,7 @@ final class VolumeRevertGuard {
 
         if inWindow, let baseline = baselineVolume {
             rmDebug("🔊 listener: reverting \(String(format: "%.3f", current)) → \(String(format: "%.3f", baseline))")
-            SystemVolume.set(baseline)
+            writeVolume(baseline)
             return
         }
         // Outside guard: defer committing this as the new baseline. If a remote HID press
