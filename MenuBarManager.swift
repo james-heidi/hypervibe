@@ -237,6 +237,9 @@ enum ButtonAction: String, CaseIterable {
 let holdCapableButtons: Set<String> = [
     "playPause", "volumeUp", "volumeDown",
     "ringUp", "ringDown", "ringLeft", "ringRight", "mute",
+    // siri emits press+release (push-to-talk relies on it); needed for the
+    // Space-hold fallback when dictation is unavailable.
+    "siri",
 ]
 
 // Scroll speed options

@@ -119,7 +119,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarManager.onParakeetDownloadCancel = { [weak mic] in
             mic?.cancelParakeetDownload()
         }
-        menuBarManager.remoteMicEnabled = true
+        // Off until ensureDictation confirms lab readiness (async, below).
+        menuBarManager.remoteMicEnabled = false
         menuBarManager.selectedTranscriptionEngine = mic.engineID
         menuBarManager.transcriptionEngineStatus = mic.engineState
         mic.onStatus = { [weak self] status, deviceName in

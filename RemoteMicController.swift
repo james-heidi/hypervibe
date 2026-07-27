@@ -72,8 +72,10 @@ final class RemoteMicController {
     var onEngineState: ((TranscriptionEngineID, TranscriptionEngineState) -> Void)?
 
     init() {
-        let defaults = UserDefaults.standard
-        enabled = defaults.object(forKey: RemoteMicLab.enabledDefaultsKey) as? Bool ?? true
+        // Start disabled: ensureDictation() enables once helper/PacketLogger/remote
+        // readiness is verified off-main. Until then Siri presses fall through to
+        // HID mapping instead of being consumed by a stack that can't capture.
+        enabled = false
         engineID = TranscriptionEngineID.current
         engine = TranscriptionEngineFactory.make(engineID)
         capture = MicCapturePipeline()

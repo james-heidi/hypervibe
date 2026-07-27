@@ -187,7 +187,14 @@ class RemoteInputHandler {
             }
         }
 
-        let action = menuBarManager?.getMapping(for: buttonName) ?? ButtonAction.none
+        var action = menuBarManager?.getMapping(for: buttonName) ?? ButtonAction.none
+        if buttonName == "siri", action == .none {
+            // Schema v6 removed siri from remappable buttons (reserved for
+            // push-to-talk). When dictation didn't consume the press — helper or
+            // PacketLogger missing — fall back to the pre-v6 default (Space hold)
+            // so the button isn't dead.
+            action = .spaceKey
+        }
         if pressed {
             print("🔘 Button pressed: \(buttonName) → \(action.rawValue)")
         }
