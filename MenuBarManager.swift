@@ -925,6 +925,8 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             case .error:
                 self.micReadinessHUD.showErrorBriefly(duration: 2.0)
             case .ready, .unavailable:
+                // HUD is press-scoped: it appears on Siri down (wave/spinner)
+                // and leaves the screen once the utterance settles.
                 self.micReadinessHUD.hide()
             }
         }

@@ -151,10 +151,14 @@ class RemoteInputHandler {
             }
         }
 
-        // First key-down after connection: skip so the connect handshake doesn't fire an action.
+        // First key-down after connection: skip so the connect handshake doesn't fire
+        // an action. Siri is exempt — a press to dictate must count even when it's the
+        // press that woke/reconnected the remote.
         if intValue == 1 && isFirstPressAfterConnection {
             isFirstPressAfterConnection = false
-            return
+            if buttonName != "siri" {
+                return
+            }
         }
 
         // Select mapped to Mouse Click keeps the special click/drag semantics;
