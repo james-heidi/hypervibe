@@ -60,9 +60,11 @@ if [ -d "$PACKETLOGGER_SOURCE" ]; then
     ditto "$PACKETLOGGER_SOURCE" "$PACKETLOGGER_DEST"
     echo "Bundled PacketLogger from $PACKETLOGGER_SOURCE"
 else
-    echo "Error: PacketLogger.app not found at $PACKETLOGGER_SOURCE"
-    echo "Set PACKETLOGGER_APP=/path/to/PacketLogger.app to build this internal prototype."
-    exit 1
+    # CI has no PacketLogger (Apple's Additional Tools needs an ADC login, and
+    # redistributing it in public releases is off-limits anyway). The app finds
+    # a user-installed PacketLogger at runtime and degrades gracefully without.
+    echo "Warning: PacketLogger.app not found at $PACKETLOGGER_SOURCE — bundling without it."
+    echo "Dictation requires PacketLogger (Xcode Additional Tools) on the user's machine."
 fi
 
 # Create proper Info.plist with all required keys

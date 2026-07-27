@@ -92,4 +92,4 @@ jobs:
             --title "HyperVibe v$v" \
             --target "$GITHUB_SHA" \
             --generate-notes \
-            --notes "Apple Silicon only (arm64). Not notarized: first launch requires right-click → Open, or \`xattr -d com.apple.quarantine /Applications/HyperVibe.app\`. Grant Accessibility + Input Monitoring in System Settings."
+            --notes "Apple Silicon only (arm64). Dictation requires Apple's PacketLogger (install *Additional Tools for Xcode* and copy PacketLogger.app to /Applications); without it, buttons/trackpad still work. Not notarized: first launch requires right-click → Open, or \`xattr -d com.apple.quarantine /Applications/HyperVibe.app\`. Grant Accessibility + Input Monitoring in System Settings."
