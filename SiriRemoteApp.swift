@@ -81,7 +81,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let helperReady = HCIHelperClient.isReady()
                 let labReady = helperReady && RemoteMicLab.evaluate().isReady
                 DispatchQueue.main.async {
-                    guard let self, let mic, labReady else { return }
+                    guard let self, let mic else { return }
+                    guard labReady else {
+                        // Prerequisites missing (helper/PacketLogger/profile) —
+                        // disable so handleSiri returns false and Siri presses
+                        // fall through to HID mapping instead of being consumed.
+                        mic.setEnabled(false)
+                        self.menuBarManager.remoteMicEnabled = false
+                        return
+                    }
                     mic.setEnabled(true)
                     self.menuBarManager.remoteMicEnabled = true
                     mic.attachSeizedDevices(self.remoteInputHandler?.seizedDevices ?? [])

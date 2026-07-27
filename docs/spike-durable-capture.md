@@ -8,6 +8,13 @@
 
 **GATE: FAIL** — park consumer remote-mic. Keep HID Core (buttons/trackpad). Do **not** build a signed helper / HyperVibe Mic installer that still depends on PacketLogger + the temporary profile. Revisit only with extra hardware or a future Apple API.
 
+> **Update (2026-07-27):** verdict revisited. The `durable-capture-spike` branch ships
+> the helper + PacketLogger path after hardening: the LaunchDaemon authenticates peers
+> via `LOCAL_PEERCRED`, allow-lists the PacketLogger binary, owns its session paths, and
+> restores Bluetooth prefs on teardown. Dictation degrades gracefully (Siri falls through
+> to HID mapping) when prerequisites are missing. The original spike findings below are
+> kept for the record.
+
 ## Spike A — private IOBluetooth receive
 
 | Metric | Result |

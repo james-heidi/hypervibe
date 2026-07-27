@@ -270,7 +270,9 @@ final class RemoteMicController {
                 }
                 rmDebug("🎤 Siri down — engine not ready (\(engineID.rawValue))")
                 publishStatus()
-                return true
+                // Not consumed: let the press fall through to HID mapping so a
+                // failed dictation stack doesn't hijack the Siri button.
+                return false
             }
             activator.rearmOnSiriDown()
             decoder?.reset()
@@ -325,6 +327,11 @@ final class RemoteMicController {
                 self.finishWorkItem = work
             }
             queue.asyncAfter(deadline: .now() + drain, execute: work)
+        } else {
+            // Release without a hold we own (press fell through above) — pass it
+            // through as well so HID mapping sees a paired key-down/key-up.
+            publishStatus()
+            return false
         }
         publishStatus()
         return true
