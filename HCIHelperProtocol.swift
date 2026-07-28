@@ -36,6 +36,7 @@ enum HCIHelperPaths {
 enum HCIHelperRequest: Equatable {
     case ping
     case status
+    case version
     case stop
     /// Client supplies only PacketLogger path + parent PID. Session paths are
     /// created by the helper under `HCIHelperPaths.sessionRoot`.
@@ -46,18 +47,25 @@ enum HCIHelperResponse: Equatable {
     case ok
     case pong
     case status(String)
+    case version(Int)
     /// Successful START — client tails `outputPath` and may delete `tokenPath` to stop.
     case started(outputPath: String, tokenPath: String)
     case error(String)
 }
 
 enum HCIHelperCodec {
+    /// Protocol/binary version reported by a modern helper. Bump when the
+    /// on-wire protocol or install contract changes in a way the app must detect.
+    static let currentHelperVersion = 2
+
     static func encode(_ request: HCIHelperRequest) -> String {
         switch request {
         case .ping:
             return "PING\n"
         case .status:
             return "STATUS\n"
+        case .version:
+            return "VERSION\n"
         case .stop:
             return "STOP\n"
         case let .start(packetLoggerPath, parentPID):
@@ -74,6 +82,7 @@ enum HCIHelperCodec {
         let trimmed = line.trimmingCharacters(in: .newlines)
         if trimmed == "PING" { return .ping }
         if trimmed == "STATUS" { return .status }
+        if trimmed == "VERSION" { return .version }
         if trimmed == "STOP" { return .stop }
         guard trimmed.hasPrefix("START|") else { return nil }
         let parts = splitFields(trimmed)
@@ -92,6 +101,8 @@ enum HCIHelperCodec {
             return "PONG\n"
         case .status(let value):
             return "STATUS|\(escape(value))\n"
+        case .version(let value):
+            return "VERSION|\(value)\n"
         case let .started(outputPath, tokenPath):
             return "STARTED|\(escape(outputPath))|\(escape(tokenPath))\n"
         case .error(let message):
@@ -112,6 +123,11 @@ enum HCIHelperCodec {
             let parts = splitFields(trimmed)
             guard parts.count >= 2 else { return nil }
             return .status(unescape(parts[1]))
+        }
+        if trimmed.hasPrefix("VERSION|") {
+            let parts = splitFields(trimmed)
+            guard parts.count >= 2, let value = Int(parts[1]) else { return nil }
+            return .version(value)
         }
         if trimmed.hasPrefix("ERR|") {
             let parts = splitFields(trimmed)

@@ -13,26 +13,31 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Select Xcode 16 (Swift 6 toolchain)
+      - name: Select Xcode 26 (Foundation Models + Swift 6)
         run: |
-          # FluidAudio 0.15.5 + Vendor/FluidAudioDeps require swift-tools 6.0.
-          # The macos-14 image defaults to Xcode 15.4 (Swift 5.10); pick the
-          # newest installed Xcode 16.x so `swift build` sees Swift 6.
-          xcode=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          # FluidAudio needs Swift 6; TranscriptPolisher needs FoundationModels
+          # (Xcode 26 SDK). Prefer Xcode 26.x; fall back to newest Xcode 16.x so
+          # CI still builds if 26 is briefly unavailable (local polish would then
+          # compile out via canImport).
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
           if [ -z "$xcode" ]; then
-            echo "No Xcode 16.x found on runner:" >&2
+            xcode=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          fi
+          if [ -z "$xcode" ]; then
+            echo "No Xcode 16+/26.x found on runner:" >&2
             ls -d /Applications/Xcode_*.app >&2 || true
             exit 1
           fi
           echo "Selecting $xcode"
           sudo xcode-select -s "$xcode/Contents/Developer"
           swift --version
+          xcrun --show-sdk-path --sdk macosx
 
       - name: Compute next version (conventional commits)
         id: ver

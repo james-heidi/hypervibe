@@ -21,8 +21,10 @@ There is no BlackHole install, temporary Bluetooth profile, sudoers edit, or sys
 
 - The engine submenu lists OpenAI / Parakeet.
 - OpenAI shows `（需 Key）` until a key is saved; **设置 OpenAI API Key…** writes to Keychain.
-- Parakeet shows `（下载…）` until cached; selecting it starts a progress download (`下载中 N%`). Cancelable.
+- Parakeet shows phase progress (`列出文件` → `下载中 N%` → `编译模型` → ready). Pause/resume keeps partial downloads; optional Hugging Face mirrors are **user-selected only** (no automatic third-party switch).
 - Status line includes the active engine, e.g. `采集中 · OpenAI · 识别中`.
+- Menu → **安装** covers Accessibility, Input Monitoring, voice helper, and **打开安装向导…**.
+- **恢复上次语音** retypes the last final transcript, or resumes interrupted PCM (~30s, memory-only).
 
 ## Paid cloud ASR benchmark (research)
 
@@ -46,11 +48,11 @@ Approximate 2026 batch pricing for short push-to-talk clips. Independent WER num
 
 Capture no longer prompts for an administrator password on every Siri press.
 
-1. Menu → **安装麦克风组件（一次性）…** (also offered the first time you enable the remote mic).
-2. Enter the Mac password once. HyperVibe installs `com.hypervibe.hcihelper` as a LaunchDaemon.
+1. Menu → **安装** → **3 语音组件**, or open the install wizard on first launch.
+2. Enter the Mac password once. HyperVibe installs `com.hypervibe.hcihelper` as a LaunchDaemon (UI stays responsive: awaiting auth → installing → verifying).
 3. Later captures talk to `/var/run/com.hypervibe.hci.sock` and start PacketLogger without another password prompt.
 
-Uninstall is available from the same menu item after install.
+Uninstall is available from the same **安装** submenu after install.
 
 ## Build
 

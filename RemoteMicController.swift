@@ -9,35 +9,13 @@
 import Foundation
 import AppKit
 
-enum MicReadinessPresentationState: Equatable {
-    case unavailable
-    case warming(showHUD: Bool)
-    case ready
-    case readyToSpeak
-    case listening
-    case recognizing
-    case releasedBeforeReady
-    case error(String)
-
-    var menuLabel: String {
-        switch self {
-        case .unavailable: return "麦克风：不可用"
-        case .warming: return "麦克风：准备中…"
-        case .ready: return "麦克风：就绪"
-        case .readyToSpeak: return "麦克风：请讲"
-        case .listening: return "麦克风：聆听中"
-        case .recognizing: return "麦克风：转写中…"
-        case .releasedBeforeReady: return "麦克风：尚未就绪"
-        case .error(let message): return "麦克风：\(message)"
-        }
-    }
-}
-
 /// End-to-end A2854 remote microphone path with zero extra hardware.
 final class RemoteMicController {
     private let activator = MicActivator()
     private let capture: MicCapturePipeline
     private let decoder: OpusVoiceDecoder?
+    private let polisher = TranscriptPolisher()
+    private let recovery = DictationRecoveryStore()
     private let queue = DispatchQueue(label: "com.hypervibe.remote-mic")
 
     private var engine: TranscriptionEngine
@@ -62,6 +40,27 @@ final class RemoteMicController {
     private var utteranceBeganAt: Date?
     private var captureWasColdAtPress = false
     private var utteranceReceivedFrame = false
+    /// True from Siri-up until ASR (+ optional polish) finishes. Blocks stray
+    /// `.ready` updates from the capture pipeline that would hide the spinner
+    /// before text is typed.
+    private var recognitionInFlight = false
+    /// Bumped on every Siri-down / Siri-up / cancel so a deferred off-main rearm
+    /// from an older press cannot stick PushToTalk after release.
+    private let pressGenerationLock = NSLock()
+    private var _pressGeneration = UUID()
+    private var pressGeneration: UUID {
+        get {
+            pressGenerationLock.lock()
+            defer { pressGenerationLock.unlock() }
+            return _pressGeneration
+        }
+        set {
+            pressGenerationLock.lock()
+            _pressGeneration = newValue
+            pressGenerationLock.unlock()
+        }
+    }
+    private let armQueue = DispatchQueue(label: "com.hypervibe.mic-arm", qos: .userInitiated)
     /// Avoid re-arm spam (SetReport storms cut the remote mic stream after ~1s).
     private var lastRearmStatus: MicCaptureStatus?
     private var warmRetryAttempt = 0
@@ -73,6 +72,93 @@ final class RemoteMicController {
     var onAudioLevel: ((Float) -> Void)?
     var onTranscribedText: ((String) -> Void)?
     var onEngineState: ((TranscriptionEngineID, TranscriptionEngineState) -> Void)?
+    var onRecoveryModeChange: ((RecoveryMode) -> Void)?
+
+    var recoveryMode: RecoveryMode { recovery.mode }
+
+    var polishMode: TranscriptPolishMode {
+        get { polisher.mode }
+        set { polisher.mode = newValue }
+    }
+
+    var polishLocalSummary: String { polisher.localAvailabilitySummary }
+    var polishCloudSummary: String { polisher.cloudAvailabilitySummary }
+
+    func prewarmPolish() {
+        polisher.prewarm()
+    }
+
+    func clearRecovery() {
+        recovery.clear()
+        publishRecoveryMode()
+    }
+
+    /// Smart recovery: retype last transcript, or resume interrupted PCM.
+    func performRecovery() {
+        switch recovery.mode {
+        case .none:
+            publishReadiness(.releasedBeforeReady)
+        case .retype(let text):
+            rmDebug("🎤 recovery retype len=\(text.count)")
+            onTranscribedText?(text)
+            recovery.clear()
+            publishRecoveryMode()
+        case .resume:
+            resumePendingUtterance()
+        }
+    }
+
+    private func publishRecoveryMode() {
+        let mode = recovery.mode
+        DispatchQueue.main.async { [weak self] in
+            self?.onRecoveryModeChange?(mode)
+        }
+    }
+
+    private func resumePendingUtterance() {
+        guard enabled, !siriHeld, !recognitionInFlight else {
+            rmDebug("🎤 recovery resume blocked (busy)")
+            return
+        }
+        guard let pending = recovery.takePending() else {
+            publishRecoveryMode()
+            return
+        }
+        publishRecoveryMode()
+        ensureCaptureWarm()
+        guard engine.startUtterance() else {
+            recovery.recordPending(pending.samples, sampleRate: pending.sampleRate, reason: .cancelled)
+            publishRecoveryMode()
+            return
+        }
+        // Splice separator so the decoder doesn't fuse words across the seam.
+        let silenceCount = Int(pending.sampleRate * 0.15)
+        let silence = [Int16](repeating: 0, count: max(0, silenceCount))
+        if let parakeet = engine as? ParakeetTranscriptionEngine {
+            parakeet.prepend(pcmS16: pending.samples + silence, sampleRate: pending.sampleRate)
+        } else {
+            engine.append(pcmS16: pending.samples + silence, sampleRate: pending.sampleRate)
+        }
+        siriHeld = true
+        recognitionInFlight = false
+        utteranceReceivedFrame = true
+        captureWasColdAtPress = false
+        utteranceBeganAt = Date()
+        publishReadiness(.listening)
+        queue.async {
+            self.acceptingAudio = true
+            self.wavSamples = pending.samples
+        }
+        // Time-boxed continuation: auto-finish after 15s unless Siri is pressed.
+        let finish = DispatchWorkItem { [weak self] in
+            guard let self, self.siriHeld else { return }
+            rmDebug("🎤 recovery resume auto-finish")
+            _ = self.handleSiri(pressed: false)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: finish)
+        // A physical Siri press during resume will take over via handleSiri.
+        rmDebug("🎤 recovery resume samples=\(pending.samples.count)")
+    }
 
     init() {
         // Start disabled: ensureDictation() enables once helper/PacketLogger/remote
@@ -99,24 +185,30 @@ final class RemoteMicController {
                     self.warmRetryWorkItem = nil
                     if (self.acceptingAudio || self.siriHeld), self.lastRearmStatus != status {
                         self.lastRearmStatus = status
-                        DispatchQueue.main.async { self.activator.rearmOnSiriDown() }
+                        let armID = self.pressGeneration
+                        self.armQueue.async {
+                            guard self.pressGeneration == armID else { return }
+                            self.activator.rearmOnSiriDown()
+                        }
                     }
                     if self.siriHeld {
                         self.publishReadiness(
                             self.utteranceReceivedFrame ? .listening : .readyToSpeak
                         )
-                    } else {
+                    } else if !self.recognitionInFlight {
                         self.publishReadiness(.ready)
                     }
                 case .starting:
                     self.publishReadiness(.warming(showHUD: self.siriHeld))
                 case .error(let message):
                     self.lastRearmStatus = nil
-                    self.publishReadiness(.error(message))
+                    // Background warm-up failures (helper not installed yet during
+                    // onboarding) must stay silent: `.error` pops the global HUD.
+                    self.publishReadiness(self.siriHeld ? .error(message) : .unavailable)
                     self.scheduleWarmRetryLocked()
                 case .missingTools(let detail):
                     self.lastRearmStatus = nil
-                    self.publishReadiness(.error(detail))
+                    self.publishReadiness(self.siriHeld ? .error(detail) : .unavailable)
                     self.scheduleWarmRetryLocked()
                 case .idle:
                     self.lastRearmStatus = nil
@@ -129,14 +221,6 @@ final class RemoteMicController {
             self?.handlePayload(payload)
         }
         bindEngineCallbacks()
-    }
-
-    var statusText: String {
-        if !enabled { return "麦克风: 未启用" }
-        var parts = [capture.status.menuLabel]
-        parts.append("·\(engineID.displayName)")
-        parts.append("·\(engine.state.menuLabel)")
-        return parts.joined(separator: " ")
     }
 
     var engineState: TranscriptionEngineState { engine.state }
@@ -192,10 +276,6 @@ final class RemoteMicController {
         (engine as? ParakeetTranscriptionEngine)?.cancelModelDownload()
     }
 
-    func readiness() -> RemoteMicReadiness {
-        RemoteMicLab.evaluate()
-    }
-
     /// Prepare the selected engine and keep HCI capture warm so the first Siri
     /// press after idle isn't racing PacketLogger/bluetoothd startup (~2s).
     func startIdleCaptureIfEnabled() {
@@ -229,7 +309,11 @@ final class RemoteMicController {
         activator.useSharedDevices(devices)
         queue.async { [weak self] in
             guard let self, self.acceptingAudio || self.siriHeld else { return }
-            DispatchQueue.main.async { self.activator.rearmOnSiriDown() }
+            let armID = self.pressGeneration
+            self.armQueue.async {
+                guard self.pressGeneration == armID else { return }
+                self.activator.rearmOnSiriDown()
+            }
         }
     }
 
@@ -237,6 +321,7 @@ final class RemoteMicController {
         stopSession(cancelRecognition: true)
         capture.stop()
         activator.disarm()
+        clearRecovery()
     }
 
     /// AGENTS.md invariant: push-to-talk must end when the remote disconnects.
@@ -245,6 +330,11 @@ final class RemoteMicController {
     func remoteDidDisconnect() {
         guard siriHeld else { return }
         rmDebug("🎤 remote disconnected while Siri held — forcing release")
+        let snapshot = queue.sync { wavSamples }
+        if !snapshot.isEmpty {
+            recovery.recordPending(snapshot, reason: .disconnected)
+            publishRecoveryMode()
+        }
         handleSiri(pressed: false)
     }
 
@@ -268,6 +358,9 @@ final class RemoteMicController {
             siriHeld = true
             lastRearmStatus = nil
             utteranceReceivedFrame = false
+            // A new press supersedes any in-flight polish from the previous utterance.
+            polisher.cancel()
+            recognitionInFlight = false
             let coldStart: Bool
             switch capture.status {
             case .idle, .error, .missingTools, .starting:
@@ -279,10 +372,10 @@ final class RemoteMicController {
             utteranceBeganAt = Date()
             // Paint the wave before any HID / capture work. publishReadiness does a
             // synchronous display + CATransaction.flush, so the frame is committed to
-            // the window server before the (now-cached, fast) SetReport arm runs. Keep
-            // the utterance lifecycle synchronous on this press callback: deferring it
-            // let a fast release flip `siriHeld` first (tap never armed) and could stack
-            // multiple startUtterance calls that reset generation / clear PCM mid-clip.
+            // the window server before we leave this callback. Utterance lifecycle
+            // stays sync here; only the blocking IOHID rearm is deferred off-main so
+            // the breathing timer can keep ticking (and a keep-alive wave is already
+            // mid-phase under alpha 0).
             publishReadiness(.readyToSpeak)
 
             // Commit any still-draining prior utterance before startUtterance clears PCM.
@@ -312,24 +405,41 @@ final class RemoteMicController {
                 // failed dictation stack doesn't hijack the Siri button.
                 return false
             }
-            activator.rearmOnSiriDown()
             decoder?.reset()
             queue.async {
                 self.acceptingAudio = true
                 self.wavSamples.removeAll(keepingCapacity: true)
             }
+
+            let armID = UUID()
+            pressGeneration = armID
+            let needsCaptureStart: Bool
             switch capture.status {
             case .idle, .error, .missingTools:
-                capture.start()
+                needsCaptureStart = true
             default:
-                break
+                needsCaptureStart = false
+            }
+            armQueue.async { [weak self] in
+                guard let self else { return }
+                // Drop stale arms from a press that already released/cancelled.
+                guard self.pressGeneration == armID else { return }
+                self.activator.rearmOnSiriDown()
+                if needsCaptureStart {
+                    guard self.pressGeneration == armID else { return }
+                    self.capture.start()
+                }
             }
             rmDebug("🎤 Siri down — mic armed engine=\(engineID.rawValue) coldStart=\(coldStart)")
         } else if siriHeld {
             siriHeld = false
+            // Invalidate any in-flight off-main rearm from this press.
+            pressGeneration = UUID()
+            recognitionInFlight = true
             if captureWasColdAtPress && !utteranceReceivedFrame {
                 switch capture.status {
                 case .idle, .starting, .missingTools, .error:
+                    recognitionInFlight = false
                     publishReadiness(.releasedBeforeReady)
                 default:
                     publishReadiness(.recognizing)
@@ -389,17 +499,39 @@ final class RemoteMicController {
             switch result {
             case .success(let text):
                 if let text, !text.isEmpty {
-                    rmDebug("🎤 typed transcript len=\(text.count)")
-                    self.onTranscribedText?(text)
+                    // Keep the recognizing HUD up through polish; type once at the end.
+                    self.publishReadiness(.recognizing)
+                    self.polisher.polish(text) { [weak self] polished in
+                        guard let self else { return }
+                        self.recognitionInFlight = false
+                        rmDebug("🎤 typed transcript len=\(polished.count)")
+                        self.recovery.recordTranscript(polished)
+                        self.publishRecoveryMode()
+                        self.onTranscribedText?(polished)
+                        self.publishReadiness(.ready)
+                        self.publishStatus()
+                    }
                 } else {
                     rmDebug("🎤 transcript empty — no typing")
+                    if !debugSamples.isEmpty {
+                        self.recovery.recordPending(debugSamples, reason: .emptyResult)
+                        self.publishRecoveryMode()
+                    }
+                    self.recognitionInFlight = false
+                    self.publishReadiness(.ready)
+                    self.publishStatus()
                 }
-                self.publishReadiness(.ready)
+                return
             case .failure(let error):
+                self.recognitionInFlight = false
                 if let te = error as? TranscriptionEngineError, case .emptyAudio = te {
                     rmDebug("🎤 empty utterance ignored")
                     self.publishReadiness(.ready)
                 } else {
+                    if !debugSamples.isEmpty {
+                        self.recovery.recordPending(debugSamples, reason: .engineError)
+                        self.publishRecoveryMode()
+                    }
                     self.publishReadiness(.error(error.localizedDescription))
                     self.presentTranscriptionFailure(error)
                 }
@@ -474,14 +606,27 @@ final class RemoteMicController {
             self.siriHeld = false
         }
         drainPending = false
+        polisher.cancel()
+        recognitionInFlight = false
+        pressGeneration = UUID()
         activator.disarm()
         if cancelRecognition {
             engine.cancel()
         } else {
+            recognitionInFlight = true
+            publishReadiness(.recognizing)
             engine.finishUtterance { [weak self] result in
                 if case .success(let text) = result, let text, !text.isEmpty {
-                    self?.onTranscribedText?(text)
+                    self?.polisher.polish(text) { polished in
+                        self?.recognitionInFlight = false
+                        self?.onTranscribedText?(polished)
+                        self?.publishReadiness(.ready)
+                        self?.publishStatus()
+                    }
+                    return
                 }
+                self?.recognitionInFlight = false
+                self?.publishReadiness(.ready)
                 self?.publishStatus()
             }
         }
@@ -497,8 +642,9 @@ final class RemoteMicController {
             guard let self else { return }
             // `.ready` is decided on the capture queue, so one computed just before a
             // Siri press can arrive after the press already raised the HUD. Honouring it
-            // then would tear the waveform down mid-utterance.
-            if state == .ready, self.siriHeld { return }
+            // then would tear the waveform down mid-utterance. The same applies while
+            // ASR/polish is still running after Siri-up — keep the spinner visible.
+            if state == .ready, self.siriHeld || self.recognitionInFlight { return }
             self.onReadinessState?(state)
         }
         // HID callbacks already run on the main runloop — deliver inline so the wave

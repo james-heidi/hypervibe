@@ -52,6 +52,7 @@ xcrun swiftc \
     TranscriptionKeychain.swift \
     OpenAITranscriptionEngine.swift \
     ParakeetTranscriptionEngine.swift \
+    ModelPreparation.swift \
     Tests/RMDebugStub.swift \
     -I "$FLUID_BIN/Modules" \
     -I "$FLUID_CHECKOUT/Sources/FastClusterWrapper/include" \
@@ -70,3 +71,96 @@ xcrun swiftc \
     -framework NaturalLanguage \
     -o /tmp/hypervibe-transcription-tests
 /tmp/hypervibe-transcription-tests
+
+xcrun swiftc \
+    Tests/TranscriptPolisherTests.swift \
+    TranscriptPolisher.swift \
+    TranscriptionKeychain.swift \
+    Tests/TranscriptionEngineErrorStub.swift \
+    Tests/RMDebugStub.swift \
+    -framework Foundation \
+    -framework Security \
+    -o /tmp/hypervibe-polisher-tests
+/tmp/hypervibe-polisher-tests
+
+xcrun swiftc \
+    Tests/PermissionStateTests.swift \
+    PermissionState.swift \
+    -framework AppKit \
+    -framework ApplicationServices \
+    -framework CoreGraphics \
+    -o /tmp/hypervibe-permission-tests
+/tmp/hypervibe-permission-tests
+
+xcrun swiftc \
+    Tests/SetupFlowTests.swift \
+    SetupFlow.swift \
+    PermissionState.swift \
+    HelperInstallCoordinator.swift \
+    HCIHelperClient.swift \
+    HCIHelperProtocol.swift \
+    HCICaptureBootstrap.swift \
+    Tests/RMDebugStub.swift \
+    -framework AppKit \
+    -framework ApplicationServices \
+    -framework CoreGraphics \
+    -o /tmp/hypervibe-setup-tests
+/tmp/hypervibe-setup-tests
+
+xcrun swiftc \
+    Tests/ButtonMappingStoreTests.swift \
+    ButtonMappingStore.swift \
+    ButtonActions.swift \
+    -framework Foundation \
+    -o /tmp/hypervibe-mapping-tests
+/tmp/hypervibe-mapping-tests
+
+xcrun swiftc \
+    Tests/DictationRecoveryTests.swift \
+    DictationRecovery.swift \
+    -framework Foundation \
+    -o /tmp/hypervibe-recovery-tests
+/tmp/hypervibe-recovery-tests
+
+xcrun swiftc \
+    Tests/MicReadinessStateTests.swift \
+    MicReadinessState.swift \
+    -framework Foundation \
+    -o /tmp/hypervibe-mic-readiness-tests
+/tmp/hypervibe-mic-readiness-tests
+
+xcrun swiftc \
+    Tests/WaveGlyphTests.swift \
+    WaveGlyph.swift \
+    -framework CoreGraphics \
+    -framework Foundation \
+    -o /tmp/hypervibe-wave-tests
+/tmp/hypervibe-wave-tests
+
+SDK_PATH=$(xcrun --show-sdk-path --sdk macosx)
+HOST_MAJOR="$(sw_vers -productVersion | cut -d. -f1)"
+TARGET="$(uname -m)-apple-macosx${HOST_MAJOR}.0"
+FLUID_BIN="$(cd Vendor/FluidAudioDeps && swift build -c release --show-bin-path)"
+FLUID_CHECKOUT="$ROOT/Vendor/FluidAudioDeps/.build/checkouts/FluidAudio"
+xcrun swiftc \
+    -sdk "$SDK_PATH" \
+    -target "$TARGET" \
+    Tests/ModelPreparationTests.swift \
+    ModelPreparation.swift \
+    Tests/RMDebugStub.swift \
+    -I "$FLUID_BIN/Modules" \
+    -I "$FLUID_CHECKOUT/Sources/FastClusterWrapper/include" \
+    -I "$FLUID_CHECKOUT/Sources/MachTaskSelfWrapper/include" \
+    -L "$FLUID_BIN" \
+    -lFluidAudio \
+    -lFastClusterWrapper \
+    -lMachTaskSelfWrapper \
+    -lc++ \
+    -framework Foundation \
+    -framework CoreML \
+    -framework AVFoundation \
+    -framework AVFAudio \
+    -framework Accelerate \
+    -framework NaturalLanguage \
+    -o /tmp/hypervibe-modelprep-tests
+/tmp/hypervibe-modelprep-tests

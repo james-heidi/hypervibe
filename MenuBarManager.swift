@@ -151,102 +151,6 @@ private final class HyperVibeAlertPanel: NSObject {
     }
 }
 
-// Button actions that can be assigned
-enum ButtonAction: String, CaseIterable {
-    case enterKey = "Enter: Submit prompt"
-    case upKey = "Up: Navigate Up"
-    case downKey = "Down: Navigate Down"
-    case leftKey = "Left: Navigate Left"
-    case rightKey = "Right: Navigate Right"
-    case escKey = "Esc: Navigate Back"
-    case backspace = "Backspace: Delete"
-    case optionBackspace = "Option + Backspace: Delete Word"
-    case commandBackspace = "Command + Backspace: Delete Line"
-    case ctrlC = "Control + C: Cancel Prompt"
-    case spaceKey = "Space: Claude Voice Dictation"
-    case rightCmd = "Right Command: 3rd-party Voice Dictation"
-    case rightOpt = "Right Option: 3rd-party Voice Dictation"
-    case f13Key = "F13: Custom Dictation Key"
-    case trackpadClick = "Mouse Click"
-    case volumeUp = "Volume Up"
-    case volumeDown = "Volume Down"
-    case mute = "Mute"
-    case playPause = "Play/Pause"
-    case none = "None"
-
-    var displayName: String {
-        switch self {
-        case .enterKey: return "Enter:发送"
-        case .upKey: return "上:向上导航"
-        case .downKey: return "下:向下导航"
-        case .leftKey: return "左:向左导航"
-        case .rightKey: return "右:向右导航"
-        case .escKey: return "Esc:返回"
-        case .backspace: return "退格:删除"
-        case .optionBackspace: return "Option + 退格:删除上一个词"
-        case .commandBackspace: return "Command + 退格:删除至行首"
-        case .ctrlC: return "Control + C:取消提示"
-        case .spaceKey: return "空格:Claude 语音听写"
-        case .rightCmd: return "右 Command:第三方语音听写"
-        case .rightOpt: return "右 Option:第三方语音听写"
-        case .f13Key: return "F13:自定义听写键"
-        case .trackpadClick: return "鼠标点击"
-        case .volumeUp: return "音量 +"
-        case .volumeDown: return "音量 −"
-        case .mute: return "静音"
-        case .playPause: return "播放/暂停"
-        case .none: return "无"
-        }
-    }
-
-    /// System media action that matches a physical Siri Remote button.
-    /// Shown only in that button's mapping submenu (音量 + → 音量 +, etc.).
-    static func nativeMediaAction(forButton key: String) -> ButtonAction? {
-        switch key {
-        case "volumeUp": return .volumeUp
-        case "volumeDown": return .volumeDown
-        case "mute": return .mute
-        case "playPause": return .playPause
-        default: return nil
-        }
-    }
-
-    var isSystemMediaKey: Bool {
-        switch self {
-        case .volumeUp, .volumeDown, .mute, .playPause: return true
-        default: return false
-        }
-    }
-
-    /// Duration-sensitive actions need the virtual key held for the full physical press.
-    /// Only a subset of HID buttons emit reliable release events, so these actions are
-    /// offered only for hold-capable buttons.
-    var requiresHold: Bool {
-        switch self {
-        case .backspace, .spaceKey, .rightCmd, .rightOpt, .f13Key: return true
-        default: return false
-        }
-    }
-
-    /// Legacy third-party dictation hotkeys, hidden from Siri Remote mappings.
-    var isVoiceDictationKey: Bool {
-        switch self {
-        case .spaceKey, .rightCmd, .rightOpt, .f13Key: return true
-        default: return false
-        }
-    }
-}
-
-/// HID buttons whose driver emits both press (value=1) and release (value=0) — verified via /tmp/hypervibe.log.
-/// menu/tv/select are excluded: menu/tv are press-only on the Siri Remote, select is handled separately for click/drag.
-let holdCapableButtons: Set<String> = [
-    "playPause", "volumeUp", "volumeDown",
-    "ringUp", "ringDown", "ringLeft", "ringRight", "mute",
-    // siri emits press+release (push-to-talk relies on it); needed for the
-    // Space-hold fallback when dictation is unavailable.
-    "siri",
-]
-
 // Scroll speed options
 enum ScrollSpeed: String, CaseIterable {
     case slow = "Slow"
@@ -303,6 +207,16 @@ private final class AudioWaveformView: NSView {
         timer = nil
         targetLevel = 0
         displayedLevel = 0
+        reactive = false
+        needsDisplay = true
+    }
+
+    /// Clear voice amplitude without stopping the breathing timer — used when the
+    /// HUD hides so the next reveal is still mid-breath, not a frozen phase-0 pose.
+    func clearVoiceLevel() {
+        targetLevel = 0
+        displayedLevel = 0
+        reactive = false
         needsDisplay = true
     }
 
@@ -407,15 +321,18 @@ private final class MicReadinessHUD {
             view.isHidden = true
         }
         spinner.style = .spinning
-        spinner.controlSize = .regular
+        spinner.controlSize = .large
+        // Force a light spinner so it stays readable on the same transparent HUD
+        // as the white waveform (system spinning style follows appearance).
+        spinner.appearance = NSAppearance(named: .darkAqua)
         iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.contentTintColor = .labelColor
+        iconView.contentTintColor = .white
 
         NSLayoutConstraint.activate([
             spinner.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: content.centerYAnchor),
-            spinner.widthAnchor.constraint(equalToConstant: 24),
-            spinner.heightAnchor.constraint(equalToConstant: 24),
+            spinner.widthAnchor.constraint(equalToConstant: 32),
+            spinner.heightAnchor.constraint(equalToConstant: 32),
             waveform.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             waveform.centerYAnchor.constraint(equalTo: content.centerYAnchor),
             waveform.widthAnchor.constraint(equalToConstant: 96),
@@ -427,8 +344,10 @@ private final class MicReadinessHUD {
         ])
 
         // Resident invisible panel: first Siri press never pays orderFront latency.
+        // Keep the breathing timer alive at alpha 0 so reveal is already mid-breath.
         positionOnActiveScreen()
         waveform.isHidden = false
+        waveform.start(reactive: false)
         panel.orderFrontRegardless()
         panel.display()
 
@@ -497,8 +416,14 @@ private final class MicReadinessHUD {
         hideWorkItem?.cancel()
         hideWorkItem = nil
         spinner.stopAnimation(nil)
-        waveform.stop()
-        // Stay ordered-front at alpha 0 — next press is a flip, not a window create.
+        spinner.isHidden = true
+        iconView.isHidden = true
+        // Keep the breathing timer running under alpha 0. Stopping it here forced
+        // every Siri press to restart at phase 0 and look frozen until the first
+        // timer tick — which often arrived after HID rearm blocked main.
+        waveform.clearVoiceLevel()
+        waveform.isHidden = false
+        waveform.start(reactive: false)
         panel.alphaValue = 0
         isVisible = false
     }
@@ -541,6 +466,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         static let downloadProgress = 91002
         static let cancelDownload = 91003
         static let engineSubmenu = 91004
+        static let recovery = 91005
     }
     
     private let statusItem: NSStatusItem
@@ -551,7 +477,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     private var remoteConnected = false
     private var menuIsOpen = false
     private var rebuildAfterMenuCloses = false
-    private(set) var trackpadControlEnabled = true
+    private(set) var trackpadControlEnabled = false
     
     // Button mappings (stored in UserDefaults)
     private var buttonMappings: [String: ButtonAction] = [:]
@@ -571,9 +497,15 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     var onOpenAIKeySave: ((String) -> Void)?
     var onParakeetDownload: (() -> Void)?
     var onParakeetDownloadCancel: (() -> Void)?
-    var remoteMicEnabled = true
+    var onPolishModeChange: ((TranscriptPolishMode) -> Void)?
+    var onOpenSetupWizard: (() -> Void)?
+    var onRecoveryAction: (() -> Void)?
+    var recoveryMode: RecoveryMode = .none
     var selectedTranscriptionEngine: TranscriptionEngineID = .parakeet
     var transcriptionEngineStatus = TranscriptionEngineState.idle
+    var selectedPolishMode: TranscriptPolishMode = .automatic
+    var polishLocalSummary = "需 macOS 26+"
+    var polishCloudSummary = "需 OpenAI Key"
 
     init(statusItem: NSStatusItem) {
         self.statusItem = statusItem
@@ -589,91 +521,28 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     private func loadTrackpadControlEnabled() {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: Self.trackpadControlEnabledDefaultsKey) == nil {
-            defaults.set(true, forKey: Self.trackpadControlEnabledDefaultsKey)
+            defaults.set(false, forKey: Self.trackpadControlEnabledDefaultsKey)
         }
         trackpadControlEnabled = defaults.bool(forKey: Self.trackpadControlEnabledDefaultsKey)
     }
 
     private func loadMappings() {
-        // Default mappings (only used on first launch / after schema upgrade)
-        let defaultMappings: [String: ButtonAction] = [
-            "playPause": .enterKey,
-            "menu": .backspace,
-            "select": .trackpadClick,
-            "ringUp": .upKey,
-            "ringDown": .downKey,
-            "ringLeft": .leftKey,
-            "ringRight": .rightKey,
-            "volumeUp": .upKey,
-            "volumeDown": .downKey,
-            "mute": .none,
-            "tv": .ctrlC
-        ]
-
-        // Schema version bumps:
-        //   v3: old media-key actions removed — drop all saved button mappings
-        //   v4: "select" default changed from .enterKey to .trackpadClick — reset just that entry
-        //   v5: A2854 click-ring and Mute defaults added via the missing-key merge below
-        //   v6: Siri is reserved exclusively for push-to-talk and removed from mappings
-        //   v7: hide third-party voice-dictation hotkeys from Siri Remote button mappings
-        //   v8: Back button default changed from Escape to Backspace
-        let currentSchema = 8
         let savedSchema = UserDefaults.standard.integer(forKey: "buttonMappingsSchema")
-        if savedSchema < 3 {
-            UserDefaults.standard.removeObject(forKey: "buttonMappings")
-        } else {
-            if var saved = UserDefaults.standard.dictionary(forKey: "buttonMappings") as? [String: String] {
-                if savedSchema < 4 {
-                    // Targeted migration: reset "select" so the new default applies.
-                    saved.removeValue(forKey: "select")
-                }
-                if savedSchema < 6 {
-                    saved.removeValue(forKey: "siri")
-                }
-                if savedSchema < 7 {
-                    for (button, raw) in saved {
-                        if let action = ButtonAction(rawValue: raw), action.isVoiceDictationKey {
-                            saved[button] = ButtonAction.none.rawValue
-                        }
-                    }
-                }
-                if savedSchema < 8 {
-                    saved.removeValue(forKey: "menu")
-                }
-                UserDefaults.standard.set(saved, forKey: "buttonMappings")
-            }
+        let saved = UserDefaults.standard.dictionary(forKey: "buttonMappings") as? [String: String]
+        let result = ButtonMappingStore.migrate(saved: saved, savedSchema: savedSchema)
+        buttonMappings = result.mappings
+        for note in result.notes {
+            rmDebug("🎮 mapping: \(note)")
         }
-        if savedSchema < currentSchema {
-            UserDefaults.standard.set(currentSchema, forKey: "buttonMappingsSchema")
-        }
+        UserDefaults.standard.set(result.schema, forKey: "buttonMappingsSchema")
+        saveMappings()
+    }
 
-        if let saved = UserDefaults.standard.dictionary(forKey: "buttonMappings") as? [String: String] {
-            for (button, actionRaw) in saved {
-                if let action = ButtonAction(rawValue: actionRaw) {
-                    buttonMappings[button] = action
-                }
-            }
-            for (button, action) in defaultMappings {
-                if buttonMappings[button] == nil {
-                    buttonMappings[button] = action
-                }
-            }
-            buttonMappings.removeValue(forKey: "siri")
-            // Clear any leftover third-party dictation hotkeys from physical buttons.
-            for (button, action) in buttonMappings where action.isVoiceDictationKey {
-                buttonMappings[button] = ButtonAction.none
-            }
-            // Defensive: if a hold-required action got persisted against a tap-only button, reset to none.
-            for (button, action) in buttonMappings
-            where action.requiresHold && action != .backspace && !holdCapableButtons.contains(button) {
-                buttonMappings[button] = ButtonAction.none
-            }
-            // Persist merged defaults and sanitization so migrations survive relaunch.
-            saveMappings()
-        } else {
-            buttonMappings = defaultMappings
-            saveMappings()
-        }
+    func resetMappingsToDefaults() {
+        buttonMappings = ButtonMappingStore.resetToDefaults()
+        UserDefaults.standard.set(ButtonMappingStore.currentSchema, forKey: "buttonMappingsSchema")
+        saveMappings()
+        requestMenuRebuild()
     }
     
     private func saveMappings() {
@@ -690,25 +559,11 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         let image = NSImage(size: NSSize(width: pt, height: pt), flipped: true) { rect in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
             ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-
-            let barWidth: CGFloat = 1.8
-            let spacing: CGFloat = 1.3
-            let heights: [CGFloat] = [5, 9, 13, 9, 5]
-            let totalWidth = CGFloat(heights.count) * barWidth
-                + CGFloat(heights.count - 1) * spacing
-            let startX = rect.midX - totalWidth / 2
-
-            for (index, height) in heights.enumerated() {
-                let bar = CGRect(
-                    x: startX + CGFloat(index) * (barWidth + spacing),
-                    y: rect.midY - height / 2,
-                    width: barWidth,
-                    height: height
-                )
+            for bar in WaveGlyph.barRects(in: rect, barCount: WaveGlyph.barCount) {
                 ctx.addPath(CGPath(
                     roundedRect: bar,
-                    cornerWidth: barWidth / 2,
-                    cornerHeight: barWidth / 2,
+                    cornerWidth: bar.width / 2,
+                    cornerHeight: bar.width / 2,
                     transform: nil
                 ))
                 ctx.fillPath()
@@ -748,6 +603,10 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         guard menu === self.menu else { return }
         menuIsOpen = true
+        // Probe helper once when the user opens the menu; rebuild uses cached
+        // statuses afterward so we do not recurse into another probe.
+        SetupCoordinator.shared.refresh(reason: .menu)
+        rebuildMenu()
     }
 
     func menuDidClose(_ menu: NSMenu) {
@@ -775,6 +634,9 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
 
+        addSetupMenu()
+        addRecoveryMenuItem()
+
         let engineItem = NSMenuItem(title: engineMenuTitle(), action: nil, keyEquivalent: "")
         engineItem.tag = MenuTag.engineSubmenu
         let engineMenu = NSMenu()
@@ -786,7 +648,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
                 } else if !ParakeetTranscriptionEngine.modelsCached {
                     title += "（下载…）"
                 }
-            } else if engineID == .openAI && !TranscriptionKeychain.hasOpenAIKey {
+            } else if engineID == .openAI && !TranscriptionKeychain.hasOpenAIKeyCached {
                 title += "（需 Key）"
             }
             let item = NSMenuItem(
@@ -804,7 +666,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         }
         engineMenu.addItem(NSMenuItem.separator())
         let openAIKeyItem = NSMenuItem(
-            title: TranscriptionKeychain.hasOpenAIKey ? "更换 OpenAI API Key…" : "设置 OpenAI API Key…",
+            title: TranscriptionKeychain.hasOpenAIKeyCached ? "更换 OpenAI API Key…" : "设置 OpenAI API Key…",
             action: #selector(promptOpenAIKey(_:)),
             keyEquivalent: ""
         )
@@ -827,6 +689,22 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         modelItem.submenu = modelMenu
         engineMenu.addItem(modelItem)
 
+        let mirrorMenu = NSMenu()
+        for mirror in ModelDownloadMirror.allCases {
+            let item = NSMenuItem(
+                title: mirror.displayName,
+                action: #selector(selectDownloadMirror(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = mirror.rawValue
+            item.state = ModelDownloadMirror.current == mirror ? .on : .off
+            mirrorMenu.addItem(item)
+        }
+        let mirrorItem = NSMenuItem(title: "Parakeet 下载源", action: nil, keyEquivalent: "")
+        mirrorItem.submenu = mirrorMenu
+        engineMenu.addItem(mirrorItem)
+
         if case .downloading(let p) = transcriptionEngineStatus, selectedTranscriptionEngine == .parakeet {
             let progress = NSMenuItem(
                 title: String(format: "Parakeet 下载中 %.0f%%", p * 100),
@@ -845,41 +723,64 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             cancel.target = self
             cancel.tag = MenuTag.cancelDownload
             engineMenu.addItem(cancel)
+        } else if case .preparing(let prep) = transcriptionEngineStatus, selectedTranscriptionEngine == .parakeet {
+            let progress = NSMenuItem(
+                title: prep.menuLabel,
+                action: nil,
+                keyEquivalent: ""
+            )
+            progress.isEnabled = false
+            progress.tag = MenuTag.downloadProgress
+            engineMenu.addItem(progress)
+
+            let cancel = NSMenuItem(
+                title: prep.phase == .paused ? "继续 Parakeet 下载" : "取消 Parakeet 下载",
+                action: #selector(cancelParakeetDownload(_:)),
+                keyEquivalent: ""
+            )
+            cancel.target = self
+            cancel.tag = MenuTag.cancelDownload
+            engineMenu.addItem(cancel)
         }
 
         engineItem.submenu = engineMenu
         menu.addItem(engineItem)
 
-        // One-shot install only — once ready, no status line (noise).
-        if !HCIHelperClient.isReadyCached() {
-            let helperItem = NSMenuItem(
-                title: "安装麦克风组件（一次性）…",
-                action: #selector(installOrManageHCIHelper(_:)),
+        let polishItem = NSMenuItem(title: "语音润色", action: nil, keyEquivalent: "")
+        let polishMenu = NSMenu()
+        for mode in TranscriptPolishMode.allCases {
+            let item = NSMenuItem(
+                title: mode.displayName,
+                action: #selector(selectPolishMode(_:)),
                 keyEquivalent: ""
             )
-            helperItem.target = self
-            menu.addItem(helperItem)
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = selectedPolishMode == mode ? .on : .off
+            polishMenu.addItem(item)
         }
+        let localStatus = NSMenuItem(
+            title: "本地：\(polishLocalSummary)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        localStatus.isEnabled = false
+        polishMenu.addItem(localStatus)
+        let cloudStatus = NSMenuItem(
+            title: "云端：\(polishCloudSummary)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        cloudStatus.isEnabled = false
+        polishMenu.addItem(cloudStatus)
+        polishItem.submenu = polishMenu
+        menu.addItem(polishItem)
 
         // Button Mappings submenu
         let mappingsItem = NSMenuItem(title: "按键映射", action: nil, keyEquivalent: "")
         let mappingsSubmenu = NSMenu()
         
-        let buttons = [
-            ("select", "触控板点击"),
-            ("ringUp", "环上"),
-            ("ringDown", "环下"),
-            ("ringLeft", "环左"),
-            ("ringRight", "环右"),
-            ("menu", "返回键 ‹"),
-            ("tv", "TV 键"),
-            ("playPause", "播放/暂停"),
-            ("volumeUp", "音量 +"),
-            ("volumeDown", "音量 −"),
-            ("mute", "静音键"),
-        ]
-        
-        for (key, label) in buttons {
+        for (key, label) in ButtonMappingStore.menuButtons {
             let buttonItem = NSMenuItem(title: label, action: nil, keyEquivalent: "")
             let actionSubmenu = NSMenu()
             let canHold = holdCapableButtons.contains(key)
@@ -915,6 +816,15 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             buttonItem.submenu = actionSubmenu
             mappingsSubmenu.addItem(buttonItem)
         }
+
+        mappingsSubmenu.addItem(NSMenuItem.separator())
+        let resetMappings = NSMenuItem(
+            title: "恢复默认按键映射",
+            action: #selector(resetDefaultMappings(_:)),
+            keyEquivalent: ""
+        )
+        resetMappings.target = self
+        mappingsSubmenu.addItem(resetMappings)
         
         mappingsItem.submenu = mappingsSubmenu
         menu.addItem(mappingsItem)
@@ -934,6 +844,110 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         menu.addItem(quitItem)
     }
     
+    /// Unified `安装` submenu: Accessibility, Input Monitoring, voice helper,
+    /// plus a shortcut back into the onboarding wizard.
+    private func addSetupMenu() {
+        SetupCoordinator.shared.refresh(reason: .display)
+        let statuses = SetupStep.allCases.map { SetupCoordinator.shared.statuses[$0] ?? .actionRequired }
+        let setupItem = NSMenuItem(title: SetupPresentation.submenuTitle(statuses: statuses), action: nil, keyEquivalent: "")
+        let setupMenu = NSMenu()
+        for step in SetupStep.allCases {
+            let status = SetupCoordinator.shared.statuses[step] ?? .actionRequired
+            let item = NSMenuItem(
+                title: SetupPresentation.menuTitle(step: step, status: status),
+                action: status.isTerminalGood ? nil : #selector(performSetupStep(_:)),
+                keyEquivalent: ""
+            )
+            item.target = status.isTerminalGood ? nil : self
+            item.isEnabled = !status.isTerminalGood
+            item.representedObject = step.rawValue
+            setupMenu.addItem(item)
+        }
+        setupMenu.addItem(NSMenuItem.separator())
+        let wizard = NSMenuItem(
+            title: "打开安装向导…",
+            action: #selector(openSetupWizard(_:)),
+            keyEquivalent: ""
+        )
+        wizard.target = self
+        setupMenu.addItem(wizard)
+        if HelperInstallCoordinator.shared.readiness.isUsableForCapture {
+            let uninstall = NSMenuItem(
+                title: "卸载语音组件…",
+                action: #selector(uninstallVoiceHelper(_:)),
+                keyEquivalent: ""
+            )
+            uninstall.target = self
+            setupMenu.addItem(uninstall)
+        }
+        setupItem.submenu = setupMenu
+        menu.addItem(setupItem)
+    }
+
+    private func addRecoveryMenuItem() {
+        let title: String
+        let enabled: Bool
+        switch recoveryMode {
+        case .none:
+            title = "无可恢复内容"
+            enabled = false
+        case .retype(let text):
+            let preview = text.count > 18 ? String(text.prefix(18)) + "…" : text
+            title = "重新输入上次识别：“\(preview)”"
+            enabled = true
+        case .resume(let seconds, _):
+            title = String(format: "继续上次录音（%.1f 秒）", seconds)
+            enabled = true
+        }
+        let item = NSMenuItem(title: title, action: enabled ? #selector(recoverDictationMenu(_:)) : nil, keyEquivalent: "")
+        item.target = enabled ? self : nil
+        item.isEnabled = enabled
+        item.tag = MenuTag.recovery
+        menu.addItem(item)
+    }
+
+    @objc private func performSetupStep(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? Int,
+              let step = SetupStep(rawValue: raw) else { return }
+        SetupCoordinator.shared.perform(step)
+        requestMenuRebuild()
+    }
+
+    @objc private func openSetupWizard(_ sender: NSMenuItem) {
+        onOpenSetupWizard?()
+    }
+
+    @objc private func uninstallVoiceHelper(_ sender: NSMenuItem) {
+        let alert = NSAlert.hyperVibeAlert()
+        alert.messageText = "卸载语音组件？"
+        alert.informativeText = "将移除后台麦克风服务。之后听写需要重新安装。"
+        alert.addButton(withTitle: "卸载…")
+        alert.addButton(withTitle: "取消")
+        guard alert.runHyperVibeModal() == .alertFirstButtonReturn else { return }
+        HelperInstallCoordinator.shared.uninstall()
+    }
+
+    @objc private func recoverDictationMenu(_ sender: NSMenuItem) {
+        onRecoveryAction?()
+    }
+
+    @objc private func resetDefaultMappings(_ sender: NSMenuItem) {
+        let alert = NSAlert.hyperVibeAlert()
+        alert.messageText = "恢复默认按键映射？"
+        alert.informativeText = "将覆盖你当前的按键自定义。"
+        alert.addButton(withTitle: "恢复")
+        alert.addButton(withTitle: "取消")
+        guard alert.runHyperVibeModal() == .alertFirstButtonReturn else { return }
+        resetMappingsToDefaults()
+    }
+
+    @objc private func selectDownloadMirror(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let mirror = ModelDownloadMirror(rawValue: raw) else { return }
+        ModelDownloadMirror.current = mirror
+        requestMenuRebuild()
+    }
+
     @objc private func changeMapping(_ sender: NSMenuItem) {
         guard let (buttonKey, action) = sender.representedObject as? (String, ButtonAction) else {
             return
@@ -953,16 +967,6 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             if changed {
                 self.requestMenuRebuild()
             }
-        }
-    }
-
-    func updateRemoteMicStatus(enabled: Bool, statusText: String, sinkName: String?) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.remoteMicEnabled = enabled
-            // Live dictation state is shown by the global HUD, not in this menu row.
-            _ = statusText
-            _ = sinkName
         }
     }
 
@@ -1014,25 +1018,19 @@ class MenuBarManager: NSObject, NSMenuDelegate {
 
     private func applyStatusIcon(for state: MicReadinessPresentationState) {
         guard let button = statusItem.button else { return }
-        switch state {
-        case .warming, .recognizing:
+        switch state.statusItemChrome {
+        case .spinner:
             button.image = nil
             statusSpinner.startAnimation(nil)
-        case .readyToSpeak:
+        case .microphone:
             statusSpinner.stopAnimation(nil)
             button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Ready")
                 ?? Self.makeWaveIcon()
-        case .listening:
+        case .waveform:
             statusSpinner.stopAnimation(nil)
             button.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Listening")
                 ?? Self.makeWaveIcon()
-        case .error, .releasedBeforeReady:
-            statusSpinner.stopAnimation(nil)
-            button.image = NSImage(
-                systemSymbolName: "exclamationmark.triangle",
-                accessibilityDescription: "麦克风未就绪"
-            ) ?? Self.makeWaveIcon()
-        default:
+        case .wave:
             statusSpinner.stopAnimation(nil)
             button.image = Self.makeWaveIcon()
         }
@@ -1040,8 +1038,13 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     }
 
     private func engineMenuTitle() -> String {
-        if case .downloading(let p) = transcriptionEngineStatus, selectedTranscriptionEngine == .parakeet {
-            return String(format: "%@（下载中 %.0f%%）", selectedTranscriptionEngine.displayName, p * 100)
+        if selectedTranscriptionEngine == .parakeet {
+            if case .downloading(let p) = transcriptionEngineStatus {
+                return String(format: "%@（下载中 %.0f%%）", selectedTranscriptionEngine.displayName, p * 100)
+            }
+            if case .preparing(let prep) = transcriptionEngineStatus {
+                return "\(selectedTranscriptionEngine.displayName)（\(prep.menuLabel)）"
+            }
         }
         return selectedTranscriptionEngine.displayName
     }
@@ -1054,17 +1057,12 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             self.selectedTranscriptionEngine = id
             self.transcriptionEngineStatus = state
 
-            let wasDownloading: Bool
-            if case .downloading = previousState { wasDownloading = true } else { wasDownloading = false }
-            let isDownloading: Bool
-            if case .downloading = state { isDownloading = true } else { isDownloading = false }
+            let wasDownloading = previousState.isDownloading
+            let isDownloading = state.isDownloading
 
             // Percent-only download updates: mutate titles, never tear down the menu tree.
             if isDownloading {
-                if case .downloading(let p) = state {
-                    self.applyDownloadProgressInPlace(p)
-                }
-                // First transition into downloading may need progress/cancel rows.
+                self.applyDownloadProgressInPlace(state)
                 if !wasDownloading {
                     self.ensureDownloadItemsInPlace()
                 }
@@ -1097,12 +1095,21 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         menu.items.first(where: { $0.tag == MenuTag.engineSubmenu })?.submenu
     }
 
-    private func applyDownloadProgressInPlace(_ fraction: Double) {
-        let percentTitle = String(format: "Parakeet（下载中 %.0f%%）", fraction * 100)
-        let progressTitle = String(format: "Parakeet 下载中 %.0f%%", fraction * 100)
+    private func applyDownloadProgressInPlace(_ state: TranscriptionEngineState) {
+        let progressTitle: String
+        let percentTitle: String
+        switch state {
+        case .downloading(let fraction):
+            progressTitle = String(format: "Parakeet 下载中 %.0f%%", fraction * 100)
+            percentTitle = String(format: "Parakeet（下载中 %.0f%%）", fraction * 100)
+        case .preparing(let prep):
+            progressTitle = prep.menuLabel
+            percentTitle = "Parakeet（\(prep.menuLabel)）"
+        default:
+            return
+        }
         if let engineItem = menu.items.first(where: { $0.tag == MenuTag.engineSubmenu }) {
-            engineItem.title = String(format: "%@（下载中 %.0f%%）",
-                                      TranscriptionEngineID.parakeet.displayName, fraction * 100)
+            engineItem.title = "\(TranscriptionEngineID.parakeet.displayName)（\(progressTitle)）"
         }
         if let item = engineSubmenu()?.item(withTag: MenuTag.parakeetEngine) {
             item.title = percentTitle
@@ -1145,10 +1152,32 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             // Keep the open menu stable; progress updates patch titles in place.
             ensureDownloadItemsInPlace()
             return
-        } else if id == .openAI && !TranscriptionKeychain.hasOpenAIKey {
+        } else if id == .openAI && !TranscriptionKeychain.hasOpenAIKeyCached {
             promptOpenAIKey(sender)
         }
         requestMenuRebuild()
+    }
+
+    @objc private func selectPolishMode(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let mode = TranscriptPolishMode(rawValue: raw) else { return }
+        selectedPolishMode = mode
+        onPolishModeChange?(mode)
+        requestMenuRebuild()
+    }
+
+    func updatePolishStatus(
+        mode: TranscriptPolishMode,
+        localSummary: String,
+        cloudSummary: String
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.selectedPolishMode = mode
+            self.polishLocalSummary = localSummary
+            self.polishCloudSummary = cloudSummary
+            self.requestMenuRebuild()
+        }
     }
 
     @objc private func selectOpenAIModel(_ sender: NSMenuItem) {
@@ -1167,7 +1196,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         alert.accessoryView = field
         alert.addButton(withTitle: "保存")
         alert.addButton(withTitle: "取消")
-        if TranscriptionKeychain.hasOpenAIKey {
+        if TranscriptionKeychain.hasOpenAIKeyCached {
             alert.addButton(withTitle: "清除 Key")
         }
         let response = alert.runHyperVibeModal()
@@ -1184,25 +1213,6 @@ class MenuBarManager: NSObject, NSMenuDelegate {
 
     @objc private func cancelParakeetDownload(_ sender: NSMenuItem) {
         onParakeetDownloadCancel?()
-    }
-
-    @objc private func installOrManageHCIHelper(_ sender: NSMenuItem) {
-        if HCIHelperClient.isReady() {
-            let alert = NSAlert.hyperVibeAlert()
-            alert.messageText = "麦克风组件"
-            alert.informativeText = "后台服务已安装。按 Siri 听写无需再输入管理员密码。\n\n如需卸载，可点「卸载…」。"
-            alert.addButton(withTitle: "好")
-            alert.addButton(withTitle: "卸载…")
-            if alert.runHyperVibeModal() == .alertSecondButtonReturn {
-                _ = HCIHelperClient.uninstallWithAdminPrompt()
-            }
-            requestMenuRebuild()
-            return
-        }
-        if RemoteMicLab.ensureHelperInstalled(presentUI: true) {
-            onEnsureDictationEnabled?()
-        }
-        requestMenuRebuild()
     }
 
     func getMapping(for button: String) -> ButtonAction {
@@ -1279,6 +1289,8 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             mediaController?.sendMediaKey(.mute)
         case .playPause:
             mediaController?.sendMediaKey(.playPause)
+        case .recoverDictation:
+            onRecoveryAction?()
         }
     }
 

@@ -38,7 +38,7 @@ class RemoteInputHandler {
     private var isSelectPressed = false
     private var selectPressTime: UInt64 = 0
     private var isDragging = false
-    private var trackpadControlEnabled = true
+    private var trackpadControlEnabled = false
     private let clickThreshold: Double = 0.25
     
     // Prevent double-processing with MediaKeyInterceptor
@@ -336,6 +336,8 @@ class RemoteInputHandler {
             mediaController.sendMediaKey(.mute)
         case .playPause:
             mediaController.sendMediaKey(.playPause)
+        case .recoverDictation:
+            menuBarManager?.executeAction(ButtonAction.recoverDictation.rawValue)
         }
     }
 
