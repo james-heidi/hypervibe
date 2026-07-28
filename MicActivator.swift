@@ -16,6 +16,18 @@ final class MicActivator {
     private var openDevices: [IOHIDDevice] = []
     private var ownsDevices = false
 
+    /// A (device, report type, report ID) triple that accepted the enable byte.
+    private struct ReportTarget {
+        let deviceIndex: Int
+        let reportType: IOHIDReportType
+        let reportID: UInt8
+    }
+
+    /// Discovery pokes every report surface, but only a couple ever answer. Each
+    /// rejected `SetReport` still costs a synchronous round trip to the remote, so
+    /// replaying only the proven ones keeps Siri-down off the critical path.
+    private var provenTargets: [ReportTarget] = []
+
     /// Prefer devices already seized by `RemoteInputHandler` so SetReport is not
     /// rejected with `kIOReturnExclusiveAccess`.
     ///
@@ -29,6 +41,7 @@ final class MicActivator {
         }
         openDevices = devices
         ownsDevices = false
+        provenTargets.removeAll()
         rmDebug("🎤 MicActivator using \(devices.count) shared HID device(s)")
         // Device attachment is not a Siri hold. Only `rearmOnSiriDown()` should
         // write reports / toggle PushToTalk; doing it here caused startup storms
@@ -45,6 +58,7 @@ final class MicActivator {
             }
         }
         openDevices.removeAll()
+        provenTargets.removeAll()
         ownsDevices = true
         tryPushToTalk(enabled: false)
 
@@ -87,8 +101,13 @@ final class MicActivator {
     }
 
     func rearmOnSiriDown() {
+        let began = CFAbsoluteTimeGetCurrent()
         sendEnable()
         tryPushToTalk(enabled: true)
+        rmDebug(String(
+            format: "🎤 MicActivator rearm total %.0fms",
+            (CFAbsoluteTimeGetCurrent() - began) * 1000
+        ))
     }
 
     func disarm() {
@@ -106,8 +125,29 @@ final class MicActivator {
 
     private func sendEnable() {
         var byte = Self.inputEnableByte
+        let began = CFAbsoluteTimeGetCurrent()
+
+        if !provenTargets.isEmpty {
+            for target in provenTargets where target.deviceIndex < openDevices.count {
+                _ = IOHIDDeviceSetReport(
+                    openDevices[target.deviceIndex],
+                    target.reportType,
+                    CFIndex(target.reportID),
+                    &byte,
+                    1
+                )
+            }
+            rmDebug(String(
+                format: "🎤 MicActivator enable replay targets=%d in %.0fms",
+                provenTargets.count,
+                (CFAbsoluteTimeGetCurrent() - began) * 1000
+            ))
+            return
+        }
+
         var logged = Set<String>()
-        for device in openDevices {
+        var discovered: [ReportTarget] = []
+        for (index, device) in openDevices.enumerated() {
             // Feature report ID 0xFF is what macOS exposes for the large remote reports.
             // Also poke 0x00 / 0xF1 / 0xFA / 0xAF in case of alternate mappings.
             for reportID in [0xFF, 0xF1, 0xFA, 0xAF, 0x00] as [UInt8] {
@@ -118,6 +158,13 @@ final class MicActivator {
                     &byte,
                     1
                 )
+                if kr == kIOReturnSuccess {
+                    discovered.append(ReportTarget(
+                        deviceIndex: index,
+                        reportType: kIOHIDReportTypeFeature,
+                        reportID: reportID
+                    ))
+                }
                 let key = String(format: "F:%02x:%08x", reportID, UInt32(bitPattern: Int32(kr)))
                 if logged.insert(key).inserted {
                     rmDebug(String(
@@ -135,6 +182,11 @@ final class MicActivator {
                     1
                 )
                 if krOut == kIOReturnSuccess {
+                    discovered.append(ReportTarget(
+                        deviceIndex: index,
+                        reportType: kIOHIDReportTypeOutput,
+                        reportID: reportID
+                    ))
                     rmDebug(String(
                         format: "🎤 MicActivator OUTPUT id=0x%02x [AF] ok",
                         reportID
@@ -142,6 +194,13 @@ final class MicActivator {
                 }
             }
         }
+        provenTargets = discovered
+        rmDebug(String(
+            format: "🎤 MicActivator enable discovery kept=%d/%d in %.0fms",
+            discovered.count,
+            openDevices.count * 10,
+            (CFAbsoluteTimeGetCurrent() - began) * 1000
+        ))
     }
 
     /// Exercise AppleBluetoothRemote's PushToTalk IOKit property when present.
