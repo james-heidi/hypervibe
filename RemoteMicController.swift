@@ -277,16 +277,54 @@ final class RemoteMicController {
             }
             captureWasColdAtPress = coldStart
             utteranceBeganAt = Date()
-            // Paint the wave before any sync / HID / capture work — that is the
-            // first thing the user should see after the Siri press.
+            // Paint the wave before any HID / capture work. publishReadiness does a
+            // synchronous display + CATransaction.flush, so the frame is committed to
+            // the window server before the (now-cached, fast) SetReport arm runs. Keep
+            // the utterance lifecycle synchronous on this press callback: deferring it
+            // let a fast release flip `siriHeld` first (tap never armed) and could stack
+            // multiple startUtterance calls that reset generation / clear PCM mid-clip.
             publishReadiness(.readyToSpeak)
 
-            // Yield the runloop so the just-flipped HUD can composite before we
-            // block main with IOHID SetReport / PacketLogger start. One frame of
-            // deferred arming is invisible next to HCI audio latency.
-            DispatchQueue.main.async { [weak self] in
-                self?.armMicAfterHUDShown(coldStart: coldStart)
+            // Commit any still-draining prior utterance before startUtterance clears PCM.
+            if drainPending {
+                queue.sync {
+                    if let work = self.finishWorkItem {
+                        work.cancel()
+                        self.finishWorkItem = nil
+                    }
+                    if self.acceptingAudio {
+                        self.commitUtteranceLocked()
+                    }
+                }
+                drainPending = false
             }
+
+            guard engine.startUtterance() else {
+                siriHeld = false
+                queue.async { self.acceptingAudio = false }
+                if case .needsSetup(let reason) = engine.state {
+                    presentEngineSetupAlert(reason)
+                }
+                rmDebug("🎤 Siri down — engine not ready (\(engineID.rawValue))")
+                publishReadiness(.ready)
+                publishStatus()
+                // Not consumed: let the press fall through to HID mapping so a
+                // failed dictation stack doesn't hijack the Siri button.
+                return false
+            }
+            activator.rearmOnSiriDown()
+            decoder?.reset()
+            queue.async {
+                self.acceptingAudio = true
+                self.wavSamples.removeAll(keepingCapacity: true)
+            }
+            switch capture.status {
+            case .idle, .error, .missingTools:
+                capture.start()
+            default:
+                break
+            }
+            rmDebug("🎤 Siri down — mic armed engine=\(engineID.rawValue) coldStart=\(coldStart)")
         } else if siriHeld {
             siriHeld = false
             if captureWasColdAtPress && !utteranceReceivedFrame {
@@ -325,51 +363,6 @@ final class RemoteMicController {
         }
         publishStatus()
         return true
-    }
-
-    /// Runs one main-queue turn after the HUD reveal so IOHID/capture work cannot
-    /// stall the first composited wave frame.
-    private func armMicAfterHUDShown(coldStart: Bool) {
-        guard siriHeld else { return }
-
-        if drainPending {
-            queue.sync {
-                if let work = self.finishWorkItem {
-                    work.cancel()
-                    self.finishWorkItem = nil
-                }
-                if self.acceptingAudio {
-                    self.commitUtteranceLocked()
-                }
-            }
-            drainPending = false
-        }
-
-        guard engine.startUtterance() else {
-            siriHeld = false
-            queue.async { self.acceptingAudio = false }
-            if case .needsSetup(let reason) = engine.state {
-                presentEngineSetupAlert(reason)
-            }
-            rmDebug("🎤 Siri down — engine not ready (\(engineID.rawValue))")
-            publishReadiness(.ready)
-            publishStatus()
-            return
-        }
-        activator.rearmOnSiriDown()
-        decoder?.reset()
-        queue.async {
-            self.acceptingAudio = true
-            self.wavSamples.removeAll(keepingCapacity: true)
-        }
-        switch capture.status {
-        case .idle, .error, .missingTools:
-            capture.start()
-        default:
-            break
-        }
-        rmDebug("🎤 Siri down — mic armed engine=\(engineID.rawValue) coldStart=\(coldStart)")
-        publishStatus()
     }
 
     private func finishHeldUtterance() {
