@@ -314,6 +314,10 @@ class RemoteInputHandler {
             sendKey(kVK_RightArrow)
         case .escKey:
             sendKey(kVK_Escape)
+        case .optionBackspace:
+            sendKey(kVK_Delete, flags: .maskAlternate)
+        case .commandBackspace:
+            sendKey(kVK_Delete, flags: .maskCommand)
         case .ctrlC:
             sendKey(kVK_ANSI_C, flags: .maskControl)
         case .backspace, .spaceKey, .rightCmd, .rightOpt, .f13Key:

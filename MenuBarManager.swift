@@ -160,6 +160,8 @@ enum ButtonAction: String, CaseIterable {
     case rightKey = "Right: Navigate Right"
     case escKey = "Esc: Navigate Back"
     case backspace = "Backspace: Delete"
+    case optionBackspace = "Option + Backspace: Delete Word"
+    case commandBackspace = "Command + Backspace: Delete Line"
     case ctrlC = "Control + C: Cancel Prompt"
     case spaceKey = "Space: Claude Voice Dictation"
     case rightCmd = "Right Command: 3rd-party Voice Dictation"
@@ -181,6 +183,8 @@ enum ButtonAction: String, CaseIterable {
         case .rightKey: return "右:向右导航"
         case .escKey: return "Esc:返回"
         case .backspace: return "退格:删除"
+        case .optionBackspace: return "Option + 退格:删除上一个词"
+        case .commandBackspace: return "Command + 退格:删除至行首"
         case .ctrlC: return "Control + C:取消提示"
         case .spaceKey: return "空格:Claude 语音听写"
         case .rightCmd: return "右 Command:第三方语音听写"
@@ -884,6 +888,10 @@ class MenuBarManager: NSObject, NSMenuDelegate {
                 // Hold actions require press+release tracking; hide them on tap-only buttons.
                 // Backspace also works as a single tap, so it stays available everywhere.
                 if action.requiresHold && action != .backspace && !canHold { continue }
+                // Bulk-delete shortcuts are intended specifically for the Back button.
+                if (action == .optionBackspace || action == .commandBackspace), key != "menu" {
+                    continue
+                }
                 // Mouse Click is only meaningful for the trackpad click button.
                 if action == .trackpadClick && key != "select" { continue }
                 // Siri Remote push-to-talk is handled by the mic pipeline.
@@ -1245,6 +1253,10 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             sendKey(kVK_Escape)
         case .backspace:
             sendKey(kVK_Delete)
+        case .optionBackspace:
+            sendKey(kVK_Delete, flags: .maskAlternate)
+        case .commandBackspace:
+            sendKey(kVK_Delete, flags: .maskCommand)
         case .ctrlC:
             sendKey(kVK_ANSI_C, flags: .maskControl)
         case .spaceKey:
