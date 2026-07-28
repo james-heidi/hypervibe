@@ -529,7 +529,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         // Default mappings (only used on first launch / after schema upgrade)
         let defaultMappings: [String: ButtonAction] = [
             "playPause": .enterKey,
-            "menu": .escKey,
+            "menu": .backspace,
             "select": .trackpadClick,
             "ringUp": .upKey,
             "ringDown": .downKey,
@@ -547,7 +547,8 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         //   v5: A2854 click-ring and Mute defaults added via the missing-key merge below
         //   v6: Siri is reserved exclusively for push-to-talk and removed from mappings
         //   v7: hide third-party voice-dictation hotkeys from Siri Remote button mappings
-        let currentSchema = 7
+        //   v8: Back button default changed from Escape to Backspace
+        let currentSchema = 8
         let savedSchema = UserDefaults.standard.integer(forKey: "buttonMappingsSchema")
         if savedSchema < 3 {
             UserDefaults.standard.removeObject(forKey: "buttonMappings")
@@ -566,6 +567,9 @@ class MenuBarManager: NSObject, NSMenuDelegate {
                             saved[button] = ButtonAction.none.rawValue
                         }
                     }
+                }
+                if savedSchema < 8 {
+                    saved.removeValue(forKey: "menu")
                 }
                 UserDefaults.standard.set(saved, forKey: "buttonMappings")
             }
@@ -591,7 +595,8 @@ class MenuBarManager: NSObject, NSMenuDelegate {
                 buttonMappings[button] = ButtonAction.none
             }
             // Defensive: if a hold-required action got persisted against a tap-only button, reset to none.
-            for (button, action) in buttonMappings where action.requiresHold && !holdCapableButtons.contains(button) {
+            for (button, action) in buttonMappings
+            where action.requiresHold && action != .backspace && !holdCapableButtons.contains(button) {
                 buttonMappings[button] = ButtonAction.none
             }
             // Persist merged defaults and sanitization so migrations survive relaunch.
@@ -610,43 +615,35 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         UserDefaults.standard.set(toSave, forKey: "buttonMappings")
     }
     
-    /// Procedurally draw the menu-bar icon — a walkie-talkie glyph mirroring the
-    /// Figma reference (36-unit viewBox: antenna + body with display + speaker
-    /// holes via even-odd fill). 2× centered scale matches the menu-bar reading
-    /// size; overflow clips at the canvas edges by design.
+    /// Draw a compact waveform matching the global dictation HUD.
     private static func makeWaveIcon() -> NSImage {
         let pt: CGFloat = 18
         let image = NSImage(size: NSSize(width: pt, height: pt), flipped: true) { rect in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            let s = rect.width
-
-            ctx.translateBy(x: s / 2, y: s / 2)
-            ctx.scaleBy(x: 2, y: 2)
-            ctx.translateBy(x: -s / 2, y: -s / 2)
-
             ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
 
-            let antenna = CGRect(x: 0.5260 * s, y: 0.1944 * s,
-                                 width: 0.0638 * s, height: 0.1594 * s)
-            let body    = CGRect(x: 0.3348 * s, y: 0.3538 * s,
-                                 width: 0.3187 * s, height: 0.4462 * s)
-            let display = CGRect(x: 0.3986 * s, y: 0.6406 * s,
-                                 width: 0.1911 * s, height: 0.0956 * s)
-            let speakerR: CGFloat = 0.0956 * s
-            let speaker = CGRect(x: 0.4942 * s - speakerR, y: 0.5131 * s - speakerR,
-                                 width: 2 * speakerR, height: 2 * speakerR)
+            let barWidth: CGFloat = 1.8
+            let spacing: CGFloat = 1.3
+            let heights: [CGFloat] = [5, 9, 13, 9, 5]
+            let totalWidth = CGFloat(heights.count) * barWidth
+                + CGFloat(heights.count - 1) * spacing
+            let startX = rect.midX - totalWidth / 2
 
-            let path = CGMutablePath()
-            path.addPath(CGPath(roundedRect: antenna,
-                                cornerWidth: 0.0278 * s, cornerHeight: 0.0278 * s, transform: nil))
-            path.addPath(CGPath(roundedRect: body,
-                                cornerWidth: 0.0556 * s, cornerHeight: 0.0556 * s, transform: nil))
-            path.addPath(CGPath(roundedRect: display,
-                                cornerWidth: 0.0278 * s, cornerHeight: 0.0278 * s, transform: nil))
-            path.addEllipse(in: speaker)
-
-            ctx.addPath(path)
-            ctx.fillPath(using: .evenOdd)
+            for (index, height) in heights.enumerated() {
+                let bar = CGRect(
+                    x: startX + CGFloat(index) * (barWidth + spacing),
+                    y: rect.midY - height / 2,
+                    width: barWidth,
+                    height: height
+                )
+                ctx.addPath(CGPath(
+                    roundedRect: bar,
+                    cornerWidth: barWidth / 2,
+                    cornerHeight: barWidth / 2,
+                    transform: nil
+                ))
+                ctx.fillPath()
+            }
             return true
         }
         image.isTemplate = true
@@ -708,7 +705,6 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         statusMenuItem.title = remoteConnected ? "已连接 ✓" : "未连接"
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
-        menu.addItem(NSMenuItem.separator())
 
         let engineItem = NSMenuItem(title: engineMenuTitle(), action: nil, keyEquivalent: "")
         engineItem.tag = MenuTag.engineSubmenu
@@ -795,9 +791,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             helperItem.target = self
             menu.addItem(helperItem)
         }
-        
-        menu.addItem(NSMenuItem.separator())
-        
+
         // Button Mappings submenu
         let mappingsItem = NSMenuItem(title: "按键映射", action: nil, keyEquivalent: "")
         let mappingsSubmenu = NSMenu()
@@ -860,8 +854,6 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         trackpadControlItem.target = self
         trackpadControlItem.state = trackpadControlEnabled ? .on : .off
         menu.addItem(trackpadControlItem)
-
-        menu.addItem(NSMenuItem.separator())
 
         // Quit
         let quitItem = NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q")
@@ -1133,29 +1125,6 @@ class MenuBarManager: NSObject, NSMenuDelegate {
 
     func getMapping(for button: String) -> ButtonAction {
         return buttonMappings[button] ?? .none
-    }
-    
-    // Map HID codes to button names
-    private let hidCodeToButton: [String: String] = [
-        "0x000C:0x00CD": "playPause",    // Play/Pause
-        "0x000C:0x00B5": "nextTrack",    // Next (not a physical button but for mapping)
-        "0x000C:0x00B6": "prevTrack",    // Previous (not a physical button but for mapping)
-        "0x000C:0x00E9": "volumeUp",     // Volume Up
-        "0x000C:0x00EA": "volumeDown",   // Volume Down
-        "0x0001:0x0086": "menu",         // Menu button (System Menu Main)
-        "0x000C:0x0080": "select",       // Select button
-        "0x000C:0x0040": "menu",         // Menu (alternate)
-        "0x000C:0x0223": "menu",         // Home
-        "0x000C:0x0224": "back",         // Back
-    ]
-    
-    /// Get the action name for a given HID code (for event interception)
-    func getMappingForHIDCode(_ hidCode: String) -> String? {
-        guard let buttonName = hidCodeToButton[hidCode],
-              let action = buttonMappings[buttonName] else {
-            return nil
-        }
-        return action.rawValue
     }
     
     /// Post the given string as a single keyboard event via `keyboardSetUnicodeString`.
