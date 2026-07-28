@@ -313,7 +313,7 @@ private final class AudioWaveformView: NSView {
         let startX = (bounds.width - totalWidth) / 2
         let centerY = bounds.midY
 
-        NSColor.labelColor.setFill()
+        let bars = NSBezierPath()
         for index in 0..<barCount {
             let distance = abs(CGFloat(index) - CGFloat(barCount - 1) / 2)
             let centerWeight = 1 - distance / CGFloat(barCount)
@@ -332,9 +332,27 @@ private final class AudioWaveformView: NSView {
                 width: barWidth,
                 height: height
             )
-            NSBezierPath(roundedRect: rect, xRadius: barWidth / 2, yRadius: barWidth / 2).fill()
+            bars.append(
+                NSBezierPath(roundedRect: rect, xRadius: barWidth / 2, yRadius: barWidth / 2)
+            )
         }
+
+        // The HUD is transparent and floats over arbitrary content. White bars carried
+        // by their own drop shadow stay legible on light and dark backgrounds alike.
+        NSGraphicsContext.saveGraphicsState()
+        Self.barShadow.set()
+        NSColor.white.setFill()
+        bars.fill()
+        NSGraphicsContext.restoreGraphicsState()
     }
+
+    private static let barShadow: NSShadow = {
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.6)
+        shadow.shadowBlurRadius = 5
+        shadow.shadowOffset = .zero
+        return shadow
+    }()
 }
 
 /// Screen-global, visual-only dictation indicator. Never activates HyperVibe.
@@ -383,8 +401,8 @@ private final class MicReadinessHUD {
             spinner.heightAnchor.constraint(equalToConstant: 24),
             waveform.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             waveform.centerYAnchor.constraint(equalTo: content.centerYAnchor),
-            waveform.widthAnchor.constraint(equalToConstant: 82),
-            waveform.heightAnchor.constraint(equalToConstant: 42),
+            waveform.widthAnchor.constraint(equalToConstant: 96),
+            waveform.heightAnchor.constraint(equalToConstant: 54),
             iconView.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             iconView.centerYAnchor.constraint(equalTo: content.centerYAnchor),
             iconView.widthAnchor.constraint(equalToConstant: 26),

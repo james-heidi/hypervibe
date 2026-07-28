@@ -476,7 +476,12 @@ final class RemoteMicController {
 
     private func publishReadiness(_ state: MicReadinessPresentationState) {
         DispatchQueue.main.async { [weak self] in
-            self?.onReadinessState?(state)
+            guard let self else { return }
+            // `.ready` is decided on the capture queue, so one computed just before a
+            // Siri press can arrive after the press already raised the HUD. Honouring it
+            // then would tear the waveform down mid-utterance.
+            if state == .ready, self.siriHeld { return }
+            self.onReadinessState?(state)
         }
     }
 
