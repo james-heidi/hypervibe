@@ -14,7 +14,7 @@ if [[ -z "$PACKETLOGGER" ]]; then
 fi
 
 if [[ -z "${PACKETLOGGER}" ]]; then
-  echo "PacketLogger not found. Run scripts/setup_remote_mic.sh first." >&2
+  echo "PacketLogger not found. Install Additional Tools for Xcode or set PACKETLOGGER." >&2
   exit 1
 fi
 

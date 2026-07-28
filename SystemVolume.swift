@@ -87,16 +87,6 @@ final class VolumeRevertGuard {
     private var stickyTimer: DispatchSourceTimer?
     private let stickyHold: TimeInterval = 2.0
 
-    /// Install the CoreAudio listener and capture the starting baseline at app launch,
-    /// so the first remote volume press has something to revert to.
-    func prewarm() {
-        ensureListener()
-        if baselineVolume == nil {
-            baselineVolume = SystemVolume.get()
-        }
-        rmDebug("🔊 VolumeRevertGuard prewarm: listener=\(listenerInstalled) baseline=\(baselineVolume.map { String(format: "%.3f", $0) } ?? "nil")")
-    }
-
     /// Called on every volume HID press from the remote. Opens the guard window and, if a
     /// volume change landed in the last `settleDelay` ms, reverts it retroactively — this
     /// handles the common case where AVRCP beats HID to the main thread.

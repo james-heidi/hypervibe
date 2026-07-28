@@ -37,11 +37,9 @@ open HyperVibe.app
 | `OpenAITranscriptionEngine.swift` | WAV upload to OpenAI `/v1/audio/transcriptions` |
 | `ParakeetTranscriptionEngine.swift` | FluidAudio Parakeet with menu-triggered lazy model download |
 | `TranscriptionKeychain.swift` | OpenAI API key in Keychain |
-| `DurableCaptureSpike.swift` | Spike A/B CLI (`--spike-a`, `--spike-b`, `--spike-durable`) |
-| `HCICaptureBootstrap.swift` | Bundled PacketLogger lookup + temporary privileged HCI settings script |
+| `HCICaptureBootstrap.swift` | Bundled PacketLogger lookup + shell quoting |
 | `MicCapturePipeline.swift` | Privileged PacketLogger HCI nhdr stream / offline replay |
 | `OpusVoiceDecoder.swift` | A2854 Opus → 48 kHz PCM |
-| `BlackHoleAudioSink.swift` | Legacy diagnostic PCM → BlackHole path (`--test-blackhole`) |
 | `Vendor/FluidAudioDeps` | SPM wrapper to build/link FluidAudio (no model weights) |
 | `MicActivator.swift` | Host-side `0xAF` / PushToTalk activation probes |
 

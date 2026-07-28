@@ -10,13 +10,5 @@
 
 #import "MultitouchSupport.h"
 #import "opus/opus.h"
-#import <IOBluetooth/IOBluetooth.h>
-
-// Informal / private delegate method used by InternalBlue-style HCI taps.
-@protocol IOBluetoothHostControllerDelegate <NSObject>
-@optional
-- (void)BluetoothHCIEventNotificationMessage:(IOBluetoothHostController *)controller
-                       inNotificationMessage:(void *)message;
-@end
 
 #endif /* SiriRemote_Bridging_Header_h */

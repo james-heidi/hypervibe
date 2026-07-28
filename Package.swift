@@ -32,7 +32,6 @@ let package = Package(
                 "TouchHandler.swift",
                 "SystemVolume.swift",
                 "OpusVoiceDecoder.swift",
-                "BlackHoleAudioSink.swift",
                 "HCICaptureBootstrap.swift",
                 "MicActivator.swift",
                 "MicCapturePipeline.swift",
@@ -43,9 +42,7 @@ let package = Package(
                 "OpenAITranscriptionEngine.swift",
                 "ParakeetTranscriptionEngine.swift",
                 "HCIHelperProtocol.swift",
-                "HCIHelperClient.swift",
-                "HCIEventTap.swift",
-                "DurableCaptureSpike.swift"
+                "HCIHelperClient.swift"
             ],
             linkerSettings: [
                 .linkedFramework("IOKit"),
@@ -55,7 +52,6 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AVFoundation"),
-                .linkedFramework("IOBluetooth"),
                 .linkedFramework("CoreML"),
                 .linkedFramework("Accelerate"),
                 .linkedFramework("NaturalLanguage"),
