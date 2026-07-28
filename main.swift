@@ -56,27 +56,6 @@ if args.contains("--test-opus") {
     exit(pcm.isEmpty ? 1 : 0)
 }
 
-if args.contains("--test-blackhole") {
-    let sink = BlackHoleAudioSink()
-    guard sink.start() else {
-        print("BlackHole start failed — install blackhole-2ch and reboot")
-        exit(1)
-    }
-    // 440 Hz tone for 1 second
-    let sr = Int(OpusVoiceDecoder.sampleRate)
-    var samples = [Int16](repeating: 0, count: sr)
-    let freq = 440.0
-    for i in 0..<sr {
-        let t = Double(i) / Double(sr)
-        samples[i] = Int16(sin(2 * Double.pi * freq * t) * Double(Int16.max / 4))
-    }
-    sink.enqueue(pcmS16: samples)
-    Thread.sleep(forTimeInterval: 1.2)
-    sink.stop()
-    print("played 440 Hz into \(sink.deviceName ?? "?")")
-    exit(0)
-}
-
 if args.contains("--capture-mic") {
     let rest = Array(args.drop(while: { $0 != "--capture-mic" }).dropFirst())
     let seconds = Double(rest.first ?? "15") ?? 15
@@ -129,70 +108,6 @@ if args.contains("--replay-hci") {
         print("wrote /tmp/hypervibe-replay.wav")
     }
     exit(capture.framesSeen > 0 ? 0 : 1)
-}
-
-if args.contains("--activate-mic") {
-    let tap = HCIEventTap()
-    tap.start()
-    let activator = MicActivator()
-    print("Arming MicActivator (0xAF + PushToTalk) + HCIEventTap…")
-    activator.arm()
-    print("Hold Siri and speak for 10s (RunLoop spinning for callbacks)…")
-    let deadline = Date().addingTimeInterval(10)
-    var rearmed = false
-    while Date() < deadline {
-        if !rearmed, Date().timeIntervalSince(deadline.addingTimeInterval(-10)) > 2 {
-            activator.rearmOnSiriDown()
-            rearmed = true
-        }
-        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
-    }
-    activator.disarm()
-    tap.stop()
-    print("done — HCI events=\(tap.eventCount); see /tmp/hypervibe.log")
-    exit(0)
-}
-
-/// Parses a spike observation window, rejecting non-finite values and
-/// clamping to 1–300s so a typo can't produce an empty or unbounded run.
-func spikeDurationSeconds(_ raw: String?) -> Double {
-    let parsed = Double(raw ?? "") ?? 12
-    guard parsed.isFinite else { return 12 }
-    return min(max(parsed, 1), 300)
-}
-
-if args.contains("--spike-a") {
-    let rest = Array(args.drop(while: { $0 != "--spike-a" }).dropFirst())
-    let sec = spikeDurationSeconds(rest.first)
-    print("Spike A: hold Siri and speak for \(Int(sec))s…")
-    print(DurableCaptureSpike.runSpikeA(durationSec: sec))
-    exit(0)
-}
-
-if args.contains("--spike-b") {
-    print(DurableCaptureSpike.runSpikeB())
-    exit(0)
-}
-
-if args.contains("--spike-durable") {
-    let rest = Array(args.drop(while: { $0 != "--spike-durable" }).dropFirst())
-    let sec = spikeDurationSeconds(rest.first)
-    print("Durable capture spike: hold Siri and speak for \(Int(sec))s during Spike A…")
-    let report = DurableCaptureSpike.runAll(spikeADuration: sec)
-    print(report)
-    let out = URL(fileURLWithPath: "/tmp/hypervibe-spike-durable.txt")
-    try? report.write(to: out, atomically: true, encoding: .utf8)
-    print("wrote \(out.path)")
-    // 2 = GATE FAIL (park consumer mic); 0 = PASS; 1 = partial / inconclusive.
-    let code: Int32
-    if report.contains("GATE: FAIL") {
-        code = 2
-    } else if report.contains("GATE: PASS") {
-        code = 0
-    } else {
-        code = 1
-    }
-    exit(code)
 }
 
 // Create the application instance

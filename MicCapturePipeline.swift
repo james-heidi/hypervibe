@@ -32,10 +32,8 @@ final class MicCapturePipeline {
     var onStatus: ((MicCaptureStatus) -> Void)?
     var onPayload: ((Data) -> Void)?
 
-    private var process: Process?
     private var helperSessionActive = false
     private var restartAfterTeardown = false
-    private var stdoutSource: DispatchSourceRead?
     private var fileReadTimer: DispatchSourceTimer?
     private var helperWatchTimer: DispatchSourceTimer?
     private var captureDirectory: URL?
@@ -178,7 +176,7 @@ final class MicCapturePipeline {
 
     func start() {
         queue.async {
-            if self.helperSessionActive || self.process != nil {
+            if self.helperSessionActive {
                 self.restartAfterTeardown = true
                 return
             }
@@ -188,7 +186,7 @@ final class MicCapturePipeline {
                 rmDebug("🎤 PacketLogger binary not found — will retry")
                 // Retry periodically so installing tools mid-session recovers without relaunch.
                 self.queue.asyncAfter(deadline: .now() + 15) { [weak self] in
-                    guard let self, !self.helperSessionActive, self.process == nil else { return }
+                    guard let self, !self.helperSessionActive else { return }
                     if case .missingTools = self.status {
                         self.start()
                     }
@@ -292,8 +290,6 @@ final class MicCapturePipeline {
         }
         if helperSessionActive {
             _ = try? HCIHelperClient.send(.stop, timeout: 5)
-        } else if let proc = process, proc.isRunning {
-            proc.terminate()
         }
         finishHelperSession(restartIfNeeded: false)
         buffer.removeAll()
@@ -303,7 +299,6 @@ final class MicCapturePipeline {
     private func finishHelperSession(restartIfNeeded: Bool) {
         teardownIO()
         helperSessionActive = false
-        process = nil
         removeCaptureDirectory()
         if restartIfNeeded, restartAfterTeardown {
             restartAfterTeardown = false
@@ -319,8 +314,6 @@ final class MicCapturePipeline {
     }
 
     private func teardownIO() {
-        stdoutSource?.cancel()
-        stdoutSource = nil
         fileReadTimer?.cancel()
         fileReadTimer = nil
         helperWatchTimer?.cancel()

@@ -68,25 +68,4 @@ enum RemoteMicLab {
         return HCIHelperClient.installWithAdminPrompt(bundledHelperURL: helper)
     }
 
-    static func presentUnavailableMessage() {
-        let readiness = evaluate()
-        let alert = NSAlert.hyperVibeAlert()
-        alert.messageText = "遥控器听写暂不可用"
-        alert.informativeText = """
-        \(readiness.checklistText)
-
-        请确认使用包含内置 PacketLogger 的 HyperVibe.app，并已安装麦克风组件、已连接 Siri Remote。
-        """
-        alert.alertStyle = .warning
-        if !readiness.hciHelper {
-            alert.addButton(withTitle: "安装麦克风组件…")
-            alert.addButton(withTitle: "好")
-            if alert.runHyperVibeModal() == .alertFirstButtonReturn {
-                _ = ensureHelperInstalled(presentUI: true)
-            }
-        } else {
-            alert.addButton(withTitle: "好")
-            alert.runHyperVibeModal()
-        }
-    }
 }

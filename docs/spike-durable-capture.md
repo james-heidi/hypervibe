@@ -2,7 +2,6 @@
 
 **Date:** 2026-07-25  
 **Host:** macOS with Bluetooth logging profile installed, PacketLogger available  
-**Command:** `./HyperVibe --spike-durable`
 
 ## Verdict
 
@@ -13,7 +12,8 @@
 > via `LOCAL_PEERCRED`, allow-lists the PacketLogger binary, owns its session paths, and
 > restores Bluetooth prefs on teardown. Dictation degrades gracefully (Siri falls through
 > to HID mapping) when prerequisites are missing. The original spike findings below are
-> kept for the record.
+> kept for the record. The obsolete spike implementation and CLI commands were removed
+> after the production helper path shipped.
 
 ## Spike A — private IOBluetooth receive
 
@@ -25,12 +25,6 @@
 | IOBluetooth receives voice | **false** |
 
 Conclusion: PacketLogger can see continuous A2854 Opus on the wire; the private IOBluetooth event tap does not. Profile ON/OFF does not change that — there is no usable ACL receive API on this path.
-
-Re-run:
-
-```bash
-./HyperVibe --spike-a 12
-```
 
 ## Spike B — BTDebug / CoreCapture
 
@@ -44,21 +38,7 @@ Re-run:
 
 Conclusion: BTDebug exposes a tiny StateDump CoreCapture pipe, not a live HCI ACL stream. Opens fail without Apple’s private PacketLogger channel. No durable zero-hardware capture without PacketLogger + logging profile.
 
-Re-run:
+## Current outcome
 
-```bash
-./HyperVibe --spike-b
-```
-
-## Product implications
-
-1. **Consumer DMG:** remote mic stays a single disabled/gated toggle with a short “not ready” message — no wizard, no sudoers, no profile checklist.
-2. **Developer Lab:** PacketLogger + temporary profile + BlackHole remains the only working path; keep under `docs/remote-mic.md` / scripts, not customer setup.
-3. **Do not build next:** privileged helper that only wraps PacketLogger; branded AudioServerPlugIn alone (does not fix capture).
-4. **Future unlocks:** companion BLE/USB hardware that owns the remote link, or an Apple-supported mic API.
-
-## Code
-
-- [`DurableCaptureSpike.swift`](../DurableCaptureSpike.swift) — probes
-- [`HCIEventTap.swift`](../HCIEventTap.swift) — event tap + byte dump for Opus scan
-- CLI: `--spike-a`, `--spike-b`, `--spike-durable`
+The private IOBluetooth and BTDebug channels remain unsuitable. HyperVibe instead uses
+the hardened helper + PacketLogger path described in [remote-mic.md](remote-mic.md).

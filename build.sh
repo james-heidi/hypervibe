@@ -22,7 +22,6 @@ SWIFT_FILES=(
     "TouchHandler.swift"
     "SystemVolume.swift"
     "OpusVoiceDecoder.swift"
-    "BlackHoleAudioSink.swift"
     "HCICaptureBootstrap.swift"
     "MicActivator.swift"
     "MicCapturePipeline.swift"
@@ -34,8 +33,6 @@ SWIFT_FILES=(
     "ParakeetTranscriptionEngine.swift"
     "HCIHelperProtocol.swift"
     "HCIHelperClient.swift"
-    "HCIEventTap.swift"
-    "DurableCaptureSpike.swift"
 )
 
 OPUS_INCLUDE="${OPUS_INCLUDE:-Vendor/libopus/include}"
@@ -154,7 +151,6 @@ for TARGET in "${TARGETS[@]}"; do
         -framework CoreAudio \
         -framework AVFoundation \
         -framework AVFAudio \
-        -framework IOBluetooth \
         -framework CoreML \
         -framework Accelerate \
         -framework NaturalLanguage \
