@@ -466,7 +466,6 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         static let downloadProgress = 91002
         static let cancelDownload = 91003
         static let engineSubmenu = 91004
-        static let recovery = 91005
     }
     
     private let statusItem: NSStatusItem
@@ -500,7 +499,6 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     var onPolishModeChange: ((TranscriptPolishMode) -> Void)?
     var onOpenSetupWizard: (() -> Void)?
     var onRecoveryAction: (() -> Void)?
-    var recoveryMode: RecoveryMode = .none
     var selectedTranscriptionEngine: TranscriptionEngineID = .parakeet
     var transcriptionEngineStatus = TranscriptionEngineState.idle
     var selectedPolishMode: TranscriptPolishMode = .automatic
@@ -626,6 +624,50 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         }
         rebuildMenu()
     }
+
+    /// Build a set of rows that pick one option out of `options`.
+    ///
+    /// These use `StickyMenuItemView` so the menu survives the click: AppKit
+    /// unconditionally dismisses a menu after a plain `NSMenuItem` action, which
+    /// made changing two settings in a row require reopening and re-navigating.
+    /// A custom view handles its own mouse-up, so nothing dismisses.
+    private func addStickyChoices<Option>(
+        to submenu: NSMenu,
+        options: [Option],
+        title: @escaping (Option) -> String,
+        isOn: @escaping (Option) -> Bool,
+        tag: ((Option) -> Int?)? = nil,
+        onSelect: @escaping (Option) -> Void
+    ) {
+        var views: [StickyMenuItemView] = []
+        for option in options {
+            let view = StickyMenuItemView(title: title(option), isOn: isOn(option)) { [weak self] in
+                onSelect(option)
+                // The menu stays up, so refresh the group's checkmarks in place —
+                // a rebuild is deferred until the menu closes.
+                for (view, option) in zip(views, options) {
+                    view.isOn = isOn(option)
+                    view.title = title(option)
+                }
+                self?.requestMenuRebuild()
+            }
+            let item = NSMenuItem()
+            item.view = view
+            if let tag = tag?(option) {
+                item.tag = tag
+            }
+            submenu.addItem(item)
+            views.append(view)
+        }
+        StickyMenuItemView.normalizeWidths(views)
+    }
+
+    /// A single row that runs an action and keeps the menu open.
+    private func stickyItem(title: String, isOn: Bool = false, action: @escaping () -> Void) -> NSMenuItem {
+        let item = NSMenuItem()
+        item.view = StickyMenuItemView(title: title, isOn: isOn, onClick: action)
+        return item
+    }
     
     private func rebuildMenu() {
         menu.removeAllItems()
@@ -635,35 +677,32 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         menu.addItem(statusMenuItem)
 
         addSetupMenu()
-        addRecoveryMenuItem()
 
         let engineItem = NSMenuItem(title: engineMenuTitle(), action: nil, keyEquivalent: "")
         engineItem.tag = MenuTag.engineSubmenu
         let engineMenu = NSMenu()
-        for engineID in TranscriptionEngineID.allCases {
-            var title = engineID.displayName
-            if engineID == .parakeet {
-                if case .downloading(let p) = transcriptionEngineStatus, selectedTranscriptionEngine == .parakeet {
-                    title += String(format: "（下载中 %.0f%%）", p * 100)
-                } else if !ParakeetTranscriptionEngine.modelsCached {
-                    title += "（下载…）"
+        addStickyChoices(
+            to: engineMenu,
+            options: TranscriptionEngineID.allCases,
+            title: { [weak self] engineID in
+                var title = engineID.displayName
+                guard let self else { return title }
+                if engineID == .parakeet {
+                    if case .downloading(let p) = self.transcriptionEngineStatus,
+                       self.selectedTranscriptionEngine == .parakeet {
+                        title += String(format: "（下载中 %.0f%%）", p * 100)
+                    } else if !ParakeetTranscriptionEngine.modelsCached {
+                        title += "（下载…）"
+                    }
+                } else if engineID == .openAI && !TranscriptionKeychain.hasOpenAIKeyCached {
+                    title += "（需 Key）"
                 }
-            } else if engineID == .openAI && !TranscriptionKeychain.hasOpenAIKeyCached {
-                title += "（需 Key）"
-            }
-            let item = NSMenuItem(
-                title: title,
-                action: #selector(selectTranscriptionEngine(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = engineID.rawValue
-            item.state = selectedTranscriptionEngine == engineID ? .on : .off
-            if engineID == .parakeet {
-                item.tag = MenuTag.parakeetEngine
-            }
-            engineMenu.addItem(item)
-        }
+                return title
+            },
+            isOn: { [weak self] engineID in self?.selectedTranscriptionEngine == engineID },
+            tag: { $0 == .parakeet ? MenuTag.parakeetEngine : nil },
+            onSelect: { [weak self] engineID in self?.applyTranscriptionEngine(engineID) }
+        )
         engineMenu.addItem(NSMenuItem.separator())
         let openAIKeyItem = NSMenuItem(
             title: TranscriptionKeychain.hasOpenAIKeyCached ? "更换 OpenAI API Key…" : "设置 OpenAI API Key…",
@@ -674,33 +713,25 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         engineMenu.addItem(openAIKeyItem)
 
         let modelMenu = NSMenu()
-        for model in TranscriptionEngineID.openAIModelChoices {
-            let item = NSMenuItem(
-                title: model,
-                action: #selector(selectOpenAIModel(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = model
-            item.state = TranscriptionEngineID.openAIModel == model ? .on : .off
-            modelMenu.addItem(item)
-        }
+        addStickyChoices(
+            to: modelMenu,
+            options: TranscriptionEngineID.openAIModelChoices,
+            title: { $0 },
+            isOn: { TranscriptionEngineID.openAIModel == $0 },
+            onSelect: { TranscriptionEngineID.openAIModel = $0 }
+        )
         let modelItem = NSMenuItem(title: "OpenAI 模型", action: nil, keyEquivalent: "")
         modelItem.submenu = modelMenu
         engineMenu.addItem(modelItem)
 
         let mirrorMenu = NSMenu()
-        for mirror in ModelDownloadMirror.allCases {
-            let item = NSMenuItem(
-                title: mirror.displayName,
-                action: #selector(selectDownloadMirror(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = mirror.rawValue
-            item.state = ModelDownloadMirror.current == mirror ? .on : .off
-            mirrorMenu.addItem(item)
-        }
+        addStickyChoices(
+            to: mirrorMenu,
+            options: ModelDownloadMirror.allCases,
+            title: { $0.displayName },
+            isOn: { ModelDownloadMirror.current == $0 },
+            onSelect: { ModelDownloadMirror.current = $0 }
+        )
         let mirrorItem = NSMenuItem(title: "Parakeet 下载源", action: nil, keyEquivalent: "")
         mirrorItem.submenu = mirrorMenu
         engineMenu.addItem(mirrorItem)
@@ -748,17 +779,16 @@ class MenuBarManager: NSObject, NSMenuDelegate {
 
         let polishItem = NSMenuItem(title: "语音润色", action: nil, keyEquivalent: "")
         let polishMenu = NSMenu()
-        for mode in TranscriptPolishMode.allCases {
-            let item = NSMenuItem(
-                title: mode.displayName,
-                action: #selector(selectPolishMode(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = mode.rawValue
-            item.state = selectedPolishMode == mode ? .on : .off
-            polishMenu.addItem(item)
-        }
+        addStickyChoices(
+            to: polishMenu,
+            options: TranscriptPolishMode.allCases,
+            title: { $0.displayName },
+            isOn: { [weak self] mode in self?.selectedPolishMode == mode },
+            onSelect: { [weak self] mode in
+                self?.selectedPolishMode = mode
+                self?.onPolishModeChange?(mode)
+            }
+        )
         let localStatus = NSMenuItem(
             title: "本地：\(polishLocalSummary)",
             action: nil,
@@ -784,6 +814,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             let buttonItem = NSMenuItem(title: label, action: nil, keyEquivalent: "")
             let actionSubmenu = NSMenu()
             let canHold = holdCapableButtons.contains(key)
+            var available: [ButtonAction] = []
 
             for action in ButtonAction.allCases {
                 // Hold actions require press+release tracking; hide them on tap-only buttons.
@@ -802,16 +833,20 @@ class MenuBarManager: NSObject, NSMenuDelegate {
                     continue
                 }
 
-                let actionItem = NSMenuItem(title: action.displayName, action: #selector(changeMapping(_:)), keyEquivalent: "")
-                actionItem.target = self
-                actionItem.representedObject = (key, action)
-
-                if buttonMappings[key] == action {
-                    actionItem.state = .on
-                }
-
-                actionSubmenu.addItem(actionItem)
+                available.append(action)
             }
+
+            addStickyChoices(
+                to: actionSubmenu,
+                options: available,
+                title: { $0.displayName },
+                isOn: { [weak self] action in self?.buttonMappings[key] == action },
+                onSelect: { [weak self] action in
+                    guard let self else { return }
+                    self.buttonMappings[key] = action
+                    self.saveMappings()
+                }
+            )
 
             buttonItem.submenu = actionSubmenu
             mappingsSubmenu.addItem(buttonItem)
@@ -829,13 +864,13 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         mappingsItem.submenu = mappingsSubmenu
         menu.addItem(mappingsItem)
 
-        let trackpadControlItem = NSMenuItem(
-            title: "触控板鼠标",
-            action: #selector(toggleTrackpadControl(_:)),
-            keyEquivalent: ""
-        )
-        trackpadControlItem.target = self
-        trackpadControlItem.state = trackpadControlEnabled ? .on : .off
+        var trackpadView: StickyMenuItemView?
+        let trackpadControlItem = stickyItem(title: "触控板鼠标", isOn: trackpadControlEnabled) { [weak self] in
+            guard let self else { return }
+            self.setTrackpadControl(!self.trackpadControlEnabled)
+            trackpadView?.isOn = self.trackpadControlEnabled
+        }
+        trackpadView = trackpadControlItem.view as? StickyMenuItemView
         menu.addItem(trackpadControlItem)
 
         // Quit
@@ -884,28 +919,6 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         menu.addItem(setupItem)
     }
 
-    private func addRecoveryMenuItem() {
-        let title: String
-        let enabled: Bool
-        switch recoveryMode {
-        case .none:
-            title = "无可恢复内容"
-            enabled = false
-        case .retype(let text):
-            let preview = text.count > 18 ? String(text.prefix(18)) + "…" : text
-            title = "重新输入上次识别：“\(preview)”"
-            enabled = true
-        case .resume(let seconds, _):
-            title = String(format: "继续上次录音（%.1f 秒）", seconds)
-            enabled = true
-        }
-        let item = NSMenuItem(title: title, action: enabled ? #selector(recoverDictationMenu(_:)) : nil, keyEquivalent: "")
-        item.target = enabled ? self : nil
-        item.isEnabled = enabled
-        item.tag = MenuTag.recovery
-        menu.addItem(item)
-    }
-
     @objc private func performSetupStep(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? Int,
               let step = SetupStep(rawValue: raw) else { return }
@@ -927,10 +940,6 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         HelperInstallCoordinator.shared.uninstall()
     }
 
-    @objc private func recoverDictationMenu(_ sender: NSMenuItem) {
-        onRecoveryAction?()
-    }
-
     @objc private func resetDefaultMappings(_ sender: NSMenuItem) {
         let alert = NSAlert.hyperVibeAlert()
         alert.messageText = "恢复默认按键映射？"
@@ -941,20 +950,11 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         resetMappingsToDefaults()
     }
 
-    @objc private func selectDownloadMirror(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let mirror = ModelDownloadMirror(rawValue: raw) else { return }
-        ModelDownloadMirror.current = mirror
+    private func setTrackpadControl(_ enabled: Bool) {
+        trackpadControlEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.trackpadControlEnabledDefaultsKey)
+        onTrackpadControlToggle?(enabled)
         requestMenuRebuild()
-    }
-
-    @objc private func changeMapping(_ sender: NSMenuItem) {
-        guard let (buttonKey, action) = sender.representedObject as? (String, ButtonAction) else {
-            return
-        }
-        buttonMappings[buttonKey] = action
-        saveMappings()
-        rebuildMenu()
     }
 
     func updateConnectionStatus(connected: Bool) {
@@ -1112,7 +1112,12 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             engineItem.title = "\(TranscriptionEngineID.parakeet.displayName)（\(progressTitle)）"
         }
         if let item = engineSubmenu()?.item(withTag: MenuTag.parakeetEngine) {
-            item.title = percentTitle
+            // Sticky rows draw their own text, so `item.title` would go unread.
+            if let sticky = item.view as? StickyMenuItemView {
+                sticky.title = percentTitle
+            } else {
+                item.title = percentTitle
+            }
         }
         if let progress = engineSubmenu()?.item(withTag: MenuTag.downloadProgress) {
             progress.title = progressTitle
@@ -1142,28 +1147,16 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         }
     }
 
-    @objc private func selectTranscriptionEngine(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let id = TranscriptionEngineID(rawValue: raw) else { return }
+    private func applyTranscriptionEngine(_ id: TranscriptionEngineID) {
         selectedTranscriptionEngine = id
         onTranscriptionEngineChange?(id)
         if id == .parakeet && !ParakeetTranscriptionEngine.modelsCached {
             onParakeetDownload?()
             // Keep the open menu stable; progress updates patch titles in place.
             ensureDownloadItemsInPlace()
-            return
         } else if id == .openAI && !TranscriptionKeychain.hasOpenAIKeyCached {
-            promptOpenAIKey(sender)
+            promptOpenAIKey(nil)
         }
-        requestMenuRebuild()
-    }
-
-    @objc private func selectPolishMode(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let mode = TranscriptPolishMode(rawValue: raw) else { return }
-        selectedPolishMode = mode
-        onPolishModeChange?(mode)
-        requestMenuRebuild()
     }
 
     func updatePolishStatus(
@@ -1180,13 +1173,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         }
     }
 
-    @objc private func selectOpenAIModel(_ sender: NSMenuItem) {
-        guard let model = sender.representedObject as? String else { return }
-        TranscriptionEngineID.openAIModel = model
-        requestMenuRebuild()
-    }
-
-    @objc private func promptOpenAIKey(_ sender: NSMenuItem) {
+    @objc private func promptOpenAIKey(_ sender: NSMenuItem?) {
         let alert = NSAlert.hyperVibeAlert()
         alert.messageText = "OpenAI API Key"
         alert.informativeText = "Key 保存在本机 Keychain，仅用于遥控器听写上传。"
@@ -1329,18 +1316,100 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         up?.post(tap: .cghidEventTap)
     }
 
-    @objc private func toggleTrackpadControl(_ sender: NSMenuItem) {
-        trackpadControlEnabled.toggle()
-        UserDefaults.standard.set(
-            trackpadControlEnabled,
-            forKey: Self.trackpadControlEnabledDefaultsKey
-        )
-        onTrackpadControlToggle?(trackpadControlEnabled)
-        rebuildMenu()
-    }
-
     @objc private func quitApp() {
         NSStatusBar.system.removeStatusItem(statusItem)
         NSApp.terminate(nil)
+    }
+}
+
+/// A menu row that performs its action *without* closing the menu.
+///
+/// `NSMenuItem` with a target/action always dismisses its menu; an item carrying
+/// a custom view gets the mouse event itself, so the menu stays up. That means
+/// this view also owns what AppKit would normally draw: the highlight, the
+/// checkmark, and the disabled text colour.
+final class StickyMenuItemView: NSView {
+    private static let font = NSFont.menuFont(ofSize: 0)
+    /// Where AppKit starts a plain item's title. Sticky rows sit next to standard
+    /// rows that AppKit lays out itself — including submenu parents, which have to
+    /// stay standard for their disclosure arrow — so this has to match rather than
+    /// use the wider gutter macOS adopts when it draws checkmarks itself.
+    private static let titleInset: CGFloat = 16
+    private static let trailingInset: CGFloat = 16
+    /// Measured from `NSMenu.size`: AppKit lays out menu rows 24pt tall.
+    private static let rowHeight: CGFloat = 24
+    private static let minimumWidth: CGFloat = 180
+
+    var title: String {
+        didSet {
+            guard title != oldValue else { return }
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
+
+    var isOn: Bool {
+        didSet {
+            guard isOn != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
+    private let onClick: () -> Void
+
+    init(title: String, isOn: Bool, onClick: @escaping () -> Void) {
+        self.title = title
+        self.isOn = isOn
+        self.onClick = onClick
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.minimumWidth, height: Self.rowHeight))
+        frame.size = intrinsicContentSize
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:)") }
+
+    /// Give every row in a group the same width so the highlight bars line up.
+    static func normalizeWidths(_ views: [StickyMenuItemView]) {
+        guard let widest = views.map(\.intrinsicContentSize.width).max() else { return }
+        for view in views {
+            view.frame.size = NSSize(width: widest, height: rowHeight)
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let width = Self.titleInset + titleSize().width + Self.trailingInset
+        return NSSize(width: max(width, Self.minimumWidth), height: Self.rowHeight)
+    }
+
+    private func titleSize() -> NSSize {
+        (title as NSString).size(withAttributes: [.font: Self.font])
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let highlighted = enclosingMenuItem?.isHighlighted ?? false
+        if highlighted {
+            NSColor.selectedContentBackgroundColor.setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 0), xRadius: 4, yRadius: 4).fill()
+        }
+
+        let textColor: NSColor = highlighted ? .selectedMenuItemTextColor : .labelColor
+        let attributes: [NSAttributedString.Key: Any] = [.font: Self.font, .foregroundColor: textColor]
+        let textY = (bounds.height - titleSize().height) / 2
+
+        if isOn {
+            let check = "✓" as NSString
+            let checkSize = check.size(withAttributes: attributes)
+            check.draw(
+                at: NSPoint(x: (Self.titleInset - checkSize.width) / 2, y: textY),
+                withAttributes: attributes
+            )
+        }
+        (title as NSString).draw(
+            at: NSPoint(x: Self.titleInset, y: textY),
+            withAttributes: attributes
+        )
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        onClick()
     }
 }

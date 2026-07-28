@@ -42,12 +42,12 @@ Each physical Siri Remote button is independently assignable via the menu bar.
 | Direction ring | Arrow keys |
 | Volume up / down | System volume |
 | Mute | System mute |
-| TV button | Control + C (cancel prompt) |
+| TV button | Recover last dictation |
 | Siri/mic button | Hold to dictate via OpenAI / Parakeet |
 
 **Hold-Capable Buttons:** Push-to-talk actions require buttons that emit both press and release HID events. Only Play/Pause, Volume Up, Volume Down, and Siri buttons allow for both events. Also this button can trigger right command or option key for other dictation apps like [VoiceInk](https://github.com/Beingpax/VoiceInk).
 
-**Recover last dictation:** Map any button to “恢复上次语音”, or use the menu-bar recovery item. Retypes the last polished text when available; otherwise resumes interrupted audio (~30s in memory, cleared on quit).
+**Recover last dictation:** Press the TV button by default, or map another button to “恢复上次语音”. Retypes the last polished text when available; otherwise resumes interrupted audio (~30s in memory, cleared on quit).
 
 
 ### Trackpad Inputs
@@ -95,7 +95,7 @@ This runs a single `swiftc` invocation over all the project's Swift files, linki
    - **Input Monitoring** — read HID / media-key events
    - **Voice helper** — privileged HCI capture component (admin password once)
 5. Pair the Siri Remote via **System Settings → Bluetooth** if it isn't already paired
-6. Use the menu-bar icon for Button Mappings, dictation engine, optional Hugging Face mirror, and **恢复上次语音**
+6. Use the menu-bar icon for Button Mappings, dictation engine, and the optional Hugging Face mirror
 7. **Internal remote dictation:** build packaging copies `/Applications/PacketLogger.app` into HyperVibe. Pick an engine (OpenAI / Parakeet), then hold Siri to speak and release to type into the focused app. Parakeet download shows real phase progress (bytes → compile → ready) and can pause/resume; mirrors are opt-in only. See [docs/remote-mic.md](docs/remote-mic.md).
 
 > ⚠️ **Important:** Prefer launching the signed app from `/Applications/HyperVibe.app`. Re-signing with a different identity invalidates Accessibility / Input Monitoring grants and looks like “dictation finished but no text typed.”

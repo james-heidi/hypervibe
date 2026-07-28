@@ -152,10 +152,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mic.onTranscribedText = { [weak menuBarManager] text in
             menuBarManager?.typeDictationText(text)
         }
-        mic.onRecoveryModeChange = { [weak menuBarManager] mode in
-            menuBarManager?.recoveryMode = mode
-            menuBarManager?.requestMenuRebuild()
-        }
         menuBarManager.onRecoveryAction = { [weak mic] in
             mic?.performRecovery()
         }

@@ -196,10 +196,10 @@ final class HelperInstallCoordinator {
         rmDebug("🎤 helper readiness=\(String(describing: next)) reason=\(reason)")
     }
 
-    static func computeReadiness() -> HelperReadiness {
+    static func computeReadiness(probeTimeout: TimeInterval = 1.0) -> HelperReadiness {
         guard HCIHelperPaths.isInstalled else { return .notInstalled }
         do {
-            let response = try HCIHelperClient.send(.version, timeout: 1.0)
+            let response = try HCIHelperClient.send(.version, timeout: probeTimeout)
             if case .version(let installed) = response {
                 let expected = HCIHelperCodec.currentHelperVersion
                 if installed < expected {
@@ -208,10 +208,10 @@ final class HelperInstallCoordinator {
                 return .ready
             }
             // Unexpected success payload — still try PING before giving up.
-            if HCIHelperClient.ping(timeout: 1.0) { return .ready }
+            if HCIHelperClient.ping(timeout: probeTimeout) { return .ready }
         } catch {
             // Pre-VERSION helpers throw on VERSION (ERR|bad request) but still PING.
-            if HCIHelperClient.ping(timeout: 1.0) {
+            if HCIHelperClient.ping(timeout: probeTimeout) {
                 return .outdated(installed: 0, expected: HCIHelperCodec.currentHelperVersion)
             }
         }
@@ -222,17 +222,25 @@ final class HelperInstallCoordinator {
 
     // MARK: - Verify
 
-    /// Only a *responding* daemon proves the install worked. launchd bootstrap plus
-    /// socket bind routinely takes several seconds, so keep probing well past that.
+    /// Only a *responding* daemon proves the install worked.
+    ///
+    /// Probe immediately, then poll densely with short socket timeouts so a dead
+    /// socket during launchd restart does not burn ~2s per attempt. Sleep budget
+    /// stays ~7s (enough for slow kickstart); typical success lands in 1–2s.
     private func verifyAfterInstall(opID: UUID) {
-        let delays: [TimeInterval] = [0.2, 0.4, 0.8, 1.6, 3.2, 3.2, 3.2]
+        let delays: [TimeInterval] = [
+            0, 0.12, 0.12, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.75, 1.0, 1.5, 2.0,
+        ]
+        let probeTimeout: TimeInterval = 0.2
         let total = delays.count
         HCIHelperClient.invalidateReadyCache()
         for (index, delay) in delays.enumerated() {
             guard installGeneration == opID else { return }
             publish(.verifying(attempt: index + 1, total: total))
-            Thread.sleep(forTimeInterval: delay)
-            let readiness = Self.computeReadiness()
+            if delay > 0 {
+                Thread.sleep(forTimeInterval: delay)
+            }
+            let readiness = Self.computeReadiness(probeTimeout: probeTimeout)
             if readiness.isResponding {
                 HCIHelperClient.setCachedReady(readiness.isUsableForCapture)
                 publish(.idle(readiness), readiness: readiness)

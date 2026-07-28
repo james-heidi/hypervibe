@@ -9,11 +9,7 @@
 import Foundation
 
 enum ButtonMappingStore {
-    /// Confirmed product defaults for fresh installs / schema-9 reset.
-    ///
-    /// `ButtonAction.recoverDictation` is intentionally absent: recovery is opt-in
-    /// per user, and sanitize() must keep it assignable to any button (it is
-    /// neither a hold action nor a legacy dictation hotkey).
+    /// Confirmed product defaults for fresh installs / schema-10 reset.
     static let defaults: [String: ButtonAction] = [
         "playPause": .escKey,
         "menu": .commandBackspace,
@@ -25,7 +21,7 @@ enum ButtonMappingStore {
         "volumeUp": .volumeUp,
         "volumeDown": .volumeDown,
         "mute": .mute,
-        "tv": .ctrlC,
+        "tv": .recoverDictation,
     ]
 
     /// Buttons shown in the 按键映射 submenu — kept here so tests can catch drift
@@ -44,7 +40,7 @@ enum ButtonMappingStore {
         ("mute", "静音键"),
     ]
 
-    static let currentSchema = 9
+    static let currentSchema = 10
 
     /// Keys whose intended default changed in v9 — reset only these so unrelated
     /// customizations survive the migration.
@@ -91,6 +87,10 @@ enum ButtonMappingStore {
                     raw.removeValue(forKey: key)
                 }
                 notes.append("schema<9: reset intended defaults \(schema9Resets.sorted())")
+            }
+            if savedSchema < 10 {
+                raw.removeValue(forKey: "tv")
+                notes.append("schema<10: reset tv to recovery")
             }
         }
 

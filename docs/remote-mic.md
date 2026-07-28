@@ -24,7 +24,7 @@ There is no BlackHole install, temporary Bluetooth profile, sudoers edit, or sys
 - Parakeet shows phase progress (`列出文件` → `下载中 N%` → `编译模型` → ready). Pause/resume keeps partial downloads; optional Hugging Face mirrors are **user-selected only** (no automatic third-party switch).
 - Status line includes the active engine, e.g. `采集中 · OpenAI · 识别中`.
 - Menu → **安装** covers Accessibility, Input Monitoring, voice helper, and **打开安装向导…**.
-- **恢复上次语音** retypes the last final transcript, or resumes interrupted PCM (~30s, memory-only).
+- The TV button defaults to **恢复上次语音**, which retypes the last final transcript or resumes interrupted PCM (~30s, memory-only).
 
 ## Paid cloud ASR benchmark (research)
 

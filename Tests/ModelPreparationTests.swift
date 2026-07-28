@@ -12,6 +12,8 @@ private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
 struct ModelPreparationTests {
     static func main() {
         testBytesOccupyTheFirstBand()
+        testDownloadPhaseWeightIsNormalized()
+        testETAEstimateNeedsRealProgress()
         testCompileOccupiesTheTailBand()
         testFractionNeverExceedsOne()
         testDownloadLabelCarriesRateAndETA()
@@ -20,6 +22,7 @@ struct ModelPreparationTests {
         testMirrorRawValuesAreRegistryHosts()
         testMirrorRoundTripsThroughDefaults()
         testThrottleSuppressesChatter()
+        testThrottleHeartbeatRefreshesStuckPercent()
         print("ModelPreparationTests: PASS")
     }
 
@@ -44,6 +47,54 @@ struct ModelPreparationTests {
 
         let progress = ModelPrepProgress.fromDownloadFraction(0.2, filesCompleted: 2, filesTotal: 7)
         expect(progress.phase == .downloading(files: 2, total: 7), "file counters ride along with the phase")
+    }
+
+    /// Regression: `ModelHub.download` only reports the download half of its own
+    /// operation, so its handler tops out at 0.5. Forwarding that fraction raw
+    /// squeezed the whole download into 0…42% and the menu read "下载中 0%" for
+    /// the first tens of megabytes.
+    private static func testDownloadPhaseWeightIsNormalized() {
+        expect(
+            abs(ModelPrepProgress.fromDownloadFraction(0.5, phaseWeight: 0.5).fraction - 0.85) < 1e-9,
+            "a finished ModelHub download fills the whole byte band"
+        )
+        expect(
+            abs(ModelPrepProgress.fromDownloadFraction(0.25, phaseWeight: 0.5).fraction - 0.425) < 1e-9,
+            "half a ModelHub download is half the byte band"
+        )
+        expect(
+            ModelPrepProgress.fromDownloadFraction(0.05, phaseWeight: 0.5).menuLabel.contains("8%"),
+            "early bytes report a moving percent instead of sticking at 0%"
+        )
+        expect(
+            abs(ModelPrepProgress.fromDownloadFraction(0.4, phaseWeight: 0).fraction - 0.34) < 1e-9,
+            "a zero weight cannot divide the fraction away"
+        )
+    }
+
+    private static func testETAEstimateNeedsRealProgress() {
+        expect(ModelPrepProgress.estimateETA(fraction: 0.0, elapsed: 10) == nil, "no progress means no estimate")
+        expect(ModelPrepProgress.estimateETA(fraction: 0.5, elapsed: 0.2) == nil, "too early to extrapolate")
+        expect(ModelPrepProgress.estimateETA(fraction: 1.0, elapsed: 10) == nil, "a finished download has no ETA")
+        expect(
+            ModelPrepProgress.estimateETA(fraction: 0.5, elapsed: 10) == 10,
+            "halfway after 10s means about 10s left"
+        )
+        expect(
+            ModelPrepProgress.estimateETA(fraction: 0.25, elapsed: 10) == 30,
+            "a quarter after 10s means about 30s left"
+        )
+    }
+
+    /// The percent stalls for minutes on Parakeet's one huge encoder file, so the
+    /// throttle must still let the ETA refresh or the menu looks frozen.
+    private static func testThrottleHeartbeatRefreshesStuckPercent() {
+        let throttle = ModelProgressThrottle()
+        let progress = ModelPrepProgress.fromDownloadFraction(0.10, filesCompleted: 1, filesTotal: 7)
+        expect(throttle.shouldPublish(progress), "the first update always publishes")
+        expect(!throttle.shouldPublish(progress), "an identical update inside the window is dropped")
+        Thread.sleep(forTimeInterval: 1.05)
+        expect(throttle.shouldPublish(progress), "the heartbeat republishes an unchanged percent")
     }
 
     private static func testCompileOccupiesTheTailBand() {

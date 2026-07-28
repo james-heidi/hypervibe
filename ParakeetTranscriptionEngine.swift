@@ -34,6 +34,9 @@ final class ParakeetTranscriptionEngine: TranscriptionEngine {
     private var downloadTask: Task<Void, Never>?
     private var cancelDownload = false
     private let progressThrottle = ModelProgressThrottle()
+    /// `ModelHub.download` splits its own operation into download + compile and hands
+    /// the handler only the download half, so its fraction tops out here.
+    private static let hubDownloadPhaseWeight = 0.5
 
     private func isCancelRequested() -> Bool { cancelDownload }
 
@@ -75,6 +78,7 @@ final class ParakeetTranscriptionEngine: TranscriptionEngine {
             etaSeconds: nil
         )))
         downloadTask?.cancel()
+        let startedAt = Date()
         downloadTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -88,8 +92,21 @@ final class ParakeetTranscriptionEngine: TranscriptionEngine {
                     variant: ParakeetEncoderPrecision.int8.rawValue
                 ) { [weak self] progress in
                     guard let self, !self.isCancelRequested() else { return }
+                    var files = 0
+                    var total = 0
+                    if case .downloading(let completed, let count) = progress.phase {
+                        files = completed
+                        total = count
+                    }
                     let mapped = ModelPrepProgress.fromDownloadFraction(
-                        progress.fractionCompleted
+                        progress.fractionCompleted,
+                        phaseWeight: Self.hubDownloadPhaseWeight,
+                        filesCompleted: files,
+                        filesTotal: total,
+                        etaSeconds: ModelPrepProgress.estimateETA(
+                            fraction: progress.fractionCompleted / Self.hubDownloadPhaseWeight,
+                            elapsed: Date().timeIntervalSince(startedAt)
+                        )
                     )
                     if self.progressThrottle.shouldPublish(mapped) {
                         self.publish(.preparing(mapped))

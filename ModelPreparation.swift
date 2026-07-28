@@ -65,14 +65,36 @@ struct ModelPrepProgress: Equatable {
     }
 
     /// Map a FluidAudio download-phase fraction into the overall 0…0.85 byte band.
-    static func fromDownloadFraction(_ fraction: Double, filesCompleted: Int = 0, filesTotal: Int = 0) -> ModelPrepProgress {
-        let clamped = max(0, min(1, fraction))
+    ///
+    /// `phaseWeight` is the share of its own operation FluidAudio gives the download
+    /// phase: `ModelHub.download` reserves the tail for a compile phase it never runs
+    /// on our path, so its handler tops out at 0.5. Without normalizing, the whole
+    /// download would squeeze into 0…42% and read 0% for the first tens of MB.
+    static func fromDownloadFraction(
+        _ fraction: Double,
+        phaseWeight: Double = 1.0,
+        filesCompleted: Int = 0,
+        filesTotal: Int = 0,
+        etaSeconds: Int? = nil
+    ) -> ModelPrepProgress {
+        let weight = phaseWeight > 0 ? phaseWeight : 1
+        let clamped = max(0, min(1, fraction / weight))
         return ModelPrepProgress(
             phase: .downloading(files: filesCompleted, total: filesTotal),
             fraction: clamped * 0.85,
             bytesPerSecond: nil,
-            etaSeconds: nil
+            etaSeconds: etaSeconds
         )
+    }
+
+    /// Extrapolate a remaining-time estimate from elapsed time alone — FluidAudio
+    /// reports fractions, not byte counts, so this is the only signal available.
+    /// Needs a little progress before the estimate stops being noise.
+    static func estimateETA(fraction: Double, elapsed: TimeInterval) -> Int? {
+        guard fraction > 0.02, fraction < 1, elapsed >= 1 else { return nil }
+        let remaining = elapsed * (1 - fraction) / fraction
+        guard remaining.isFinite, remaining >= 1 else { return nil }
+        return Int(remaining.rounded())
     }
 
     static func compiling(name: String, step: Int, total: Int) -> ModelPrepProgress {
@@ -125,29 +147,33 @@ enum ModelDownloadMirror: String, CaseIterable {
     }
 }
 
-/// Throttle helper: publish on phase change, percent change, or ≥250ms elapsed.
+/// Throttle helper: publish on phase change, on a percent change no more than once
+/// per 250ms, and on a slow heartbeat so a long single-file download still refreshes
+/// its ETA instead of looking frozen.
 final class ModelProgressThrottle {
     private var lastPhase: ModelPrepProgress.Phase?
     private var lastPercent = -1
     private var lastPublishedAt = Date.distantPast
     private let minInterval: TimeInterval = 0.25
+    private let heartbeatInterval: TimeInterval = 1.0
 
     func shouldPublish(_ progress: ModelPrepProgress) -> Bool {
         let percent = Int((progress.fraction * 100).rounded(.down))
         let now = Date()
+        let elapsed = now.timeIntervalSince(lastPublishedAt)
         let phaseChanged = progress.phase != lastPhase
         let percentChanged = percent != lastPercent
-        let elapsed = now.timeIntervalSince(lastPublishedAt) >= minInterval
-        guard phaseChanged || (percentChanged && elapsed) || (phaseChanged == false && elapsed && percentChanged) else {
-            // Always allow first publish / phase transitions immediately.
-            if lastPhase == nil || phaseChanged {
-                lastPhase = progress.phase
-                lastPercent = percent
-                lastPublishedAt = now
-                return true
-            }
-            return false
+
+        let publish: Bool
+        if lastPhase == nil || phaseChanged {
+            publish = true
+        } else if percentChanged {
+            publish = elapsed >= minInterval
+        } else {
+            publish = elapsed >= heartbeatInterval
         }
+        guard publish else { return false }
+
         lastPhase = progress.phase
         lastPercent = percent
         lastPublishedAt = now

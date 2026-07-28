@@ -12,6 +12,7 @@ struct ButtonMappingStoreTests {
     static func main() {
         testFreshInstallDefaults()
         testSchema9ResetsIntendedKeys()
+        testSchema10ResetsTVToRecovery()
         testMenuButtonsCoverDefaults()
         testSanitizeClearsVoiceHotkeys()
         print("ButtonMappingStoreTests: PASS")
@@ -25,8 +26,8 @@ struct ButtonMappingStoreTests {
         expect(result.mappings["volumeUp"] == .volumeUp, "volumeUp default")
         expect(result.mappings["volumeDown"] == .volumeDown, "volumeDown default")
         expect(result.mappings["mute"] == .mute, "mute default")
-        expect(result.mappings["tv"] == .ctrlC, "tv default")
-        expect(result.schema == 9, "schema 9")
+        expect(result.mappings["tv"] == .recoverDictation, "tv defaults to recovery")
+        expect(result.schema == 10, "schema 10")
     }
 
     private static func testSchema9ResetsIntendedKeys() {
@@ -41,8 +42,19 @@ struct ButtonMappingStoreTests {
         expect(result.mappings["playPause"] == .escKey, "schema9 resets playPause")
         expect(result.mappings["menu"] == .commandBackspace, "schema9 resets menu")
         expect(result.mappings["select"] == .enterKey, "schema9 resets select")
-        expect(result.mappings["tv"] == .ctrlC, "tv preserved")
+        expect(result.mappings["tv"] == .recoverDictation, "schema10 also resets tv")
         expect(result.mappings["ringUp"] == .upKey, "ringUp preserved")
+    }
+
+    private static func testSchema10ResetsTVToRecovery() {
+        let saved: [String: String] = [
+            "tv": ButtonAction.ctrlC.rawValue,
+            "ringUp": ButtonAction.downKey.rawValue,
+        ]
+        let result = ButtonMappingStore.migrate(saved: saved, savedSchema: 9)
+        expect(result.mappings["tv"] == .recoverDictation, "schema10 resets tv to recovery")
+        expect(result.mappings["ringUp"] == .downKey, "schema10 preserves unrelated mappings")
+        expect(result.schema == 10, "schema10 migration advances schema")
     }
 
     private static func testMenuButtonsCoverDefaults() {

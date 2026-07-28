@@ -92,22 +92,6 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
             row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
 
-        let footer = NSStackView()
-        footer.orientation = .horizontal
-        footer.spacing = 8
-        footer.alignment = .centerY
-
-        let later = NSButton(title: "稍后再说", target: self, action: #selector(dismissLater))
-        later.bezelStyle = .rounded
-        let done = NSButton(title: "完成", target: self, action: #selector(finish))
-        done.bezelStyle = .rounded
-        done.keyEquivalent = "\r"
-        footer.addArrangedSubview(NSView()) // spacer
-        footer.addArrangedSubview(later)
-        footer.addArrangedSubview(done)
-        stack.addArrangedSubview(footer)
-        footer.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
@@ -128,6 +112,11 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         for step in SetupStep.allCases {
             rows[step]?.setPrimary(step == firstIncomplete)
         }
+        // No footer button left — dismiss once every step is done.
+        if coordinator.allSatisfied {
+            SetupCoordinator.markOnboardingComplete()
+            window?.close()
+        }
     }
 
     private func startPolling() {
@@ -142,18 +131,6 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     private func stopPolling() {
         pollTimer?.invalidate()
         pollTimer = nil
-    }
-
-    @objc private func dismissLater() {
-        window?.close()
-    }
-
-    @objc private func finish() {
-        coordinator.refresh(reason: .action)
-        if coordinator.allSatisfied {
-            SetupCoordinator.markOnboardingComplete()
-        }
-        window?.close()
     }
 }
 
