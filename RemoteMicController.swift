@@ -420,13 +420,15 @@ final class RemoteMicController {
             default:
                 needsCaptureStart = false
             }
-            armQueue.async { [weak self] in
-                guard let self else { return }
-                // Drop stale arms from a press that already released/cancelled.
-                guard self.pressGeneration == armID else { return }
-                self.activator.rearmOnSiriDown()
-                if needsCaptureStart {
-                    guard self.pressGeneration == armID else { return }
+            // Arm synchronously on the press callback. Deferring it let a fast
+            // release bump `pressGeneration` first, so the queued arm dropped
+            // itself and the tap captured no audio. The SetReport is cheap thanks
+            // to proven-target caching, and the HUD frame is already committed
+            // above via publishReadiness's display + CATransaction.flush.
+            activator.rearmOnSiriDown()
+            if needsCaptureStart {
+                armQueue.async { [weak self] in
+                    guard let self, self.pressGeneration == armID else { return }
                     self.capture.start()
                 }
             }
