@@ -75,9 +75,11 @@ final class MicActivator {
         for device in set {
             let vendor = intProperty(device, kIOHIDVendorIDKey) ?? 0
             let product = intProperty(device, kIOHIDProductIDKey) ?? 0
-            // Apple vendor; A2854 product 0x0315 (789). Also accept other Siri remotes.
+            // Apple vendor; A2854 product 0x0315 (789), A2540 product 0x0314 (788).
+            // Also accept other Siri remotes.
             let isApple = vendor == 0x004C || vendor == 1452
-            let isRemote = product == 0x0315 || product == 0x0266 || product == 789 || product == 614
+            let isRemote = product == 0x0315 || product == 0x0266 || product == 0x0314
+                || product == 789 || product == 614
             guard isApple && (isRemote || productName(device).localizedCaseInsensitiveContains("remote")) else {
                 continue
             }
