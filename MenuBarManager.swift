@@ -7,6 +7,7 @@
 
 import AppKit
 import Carbon.HIToolbox
+import QuartzCore
 
 extension NSAlert {
     /// Build an alert without the menu-bar app's placeholder icon.
@@ -265,18 +266,24 @@ private final class AudioWaveformView: NSView {
     private var reactive = false
 
     override var isFlipped: Bool { true }
+    override var wantsUpdateLayer: Bool { false }
+    override var isOpaque: Bool { false }
 
     func start(reactive: Bool) {
+        // Never reset amplitude here: ready→listening must not restart the animation,
+        // otherwise the wave visibly snaps mid-hold.
         self.reactive = reactive
-        if !reactive {
-            targetLevel = 0
-            displayedLevel = 0
+        guard timer == nil else {
+            needsDisplay = true
+            return
         }
-        guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) {
-            [weak self] _ in
+        // CommonModes so the wave keeps ticking while menus/tracking runloops are up.
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             self?.tick()
         }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+        needsDisplay = true
     }
 
     func setReactive(_ reactive: Bool) {
@@ -296,7 +303,7 @@ private final class AudioWaveformView: NSView {
     }
 
     private func tick() {
-        phase += 0.16
+        phase += 0.10
         if reactive {
             displayedLevel += (targetLevel - displayedLevel) * 0.34
             targetLevel *= 0.88
@@ -317,14 +324,14 @@ private final class AudioWaveformView: NSView {
         for index in 0..<barCount {
             let distance = abs(CGFloat(index) - CGFloat(barCount - 1) / 2)
             let centerWeight = 1 - distance / CGFloat(barCount)
-            let height: CGFloat
+            // The breathing baseline is always present, and voice rides on top of it.
+            // Ready and silent-listening therefore render identically — no collapse to
+            // flat dots when the reactive state arrives before the first audio frame.
+            let breath = (sin(phase + CGFloat(index) * 0.9) + 1) / 2
+            var height = 7 + breath * 12 * centerWeight
             if reactive {
                 let flutter = 0.72 + 0.28 * sin(phase * 1.7 + CGFloat(index) * 1.25)
-                height = 5 + displayedLevel * 34 * centerWeight * flutter
-            } else {
-                // Quiet breathing motion communicates "ready" without implying speech.
-                let wave = (sin(phase + CGFloat(index) * 0.9) + 1) / 2
-                height = 7 + wave * 12 * centerWeight
+                height += displayedLevel * 30 * centerWeight * flutter
             }
             let rect = NSRect(
                 x: startX + CGFloat(index) * (barWidth + spacing),
@@ -356,12 +363,16 @@ private final class AudioWaveformView: NSView {
 }
 
 /// Screen-global, visual-only dictation indicator. Never activates HyperVibe.
+///
+/// Kept resident in the window server at `alphaValue = 0` so a Siri press is a
+/// pure visibility flip + synchronous paint — no `orderFront` / first-frame hitch.
 private final class MicReadinessHUD {
     private let panel: NSPanel
     private let spinner = NSProgressIndicator()
     private let waveform = AudioWaveformView()
     private let iconView = NSImageView()
     private var hideWorkItem: DispatchWorkItem?
+    private var screenObserver: NSObjectProtocol?
     private(set) var isVisible = false
 
     init() {
@@ -379,6 +390,7 @@ private final class MicReadinessHUD {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
+        panel.alphaValue = 0
 
         let content = NSView()
         content.wantsLayer = true
@@ -388,6 +400,7 @@ private final class MicReadinessHUD {
         for view in [spinner, waveform, iconView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(view)
+            view.isHidden = true
         }
         spinner.style = .spinning
         spinner.controlSize = .regular
@@ -408,16 +421,39 @@ private final class MicReadinessHUD {
             iconView.widthAnchor.constraint(equalToConstant: 26),
             iconView.heightAnchor.constraint(equalToConstant: 26),
         ])
+
+        // Resident invisible panel: first Siri press never pays orderFront latency.
+        positionOnActiveScreen()
+        waveform.isHidden = false
+        panel.orderFrontRegardless()
+        panel.display()
+
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, !self.isVisible else { return }
+            self.positionOnActiveScreen()
+        }
+    }
+
+    deinit {
+        if let screenObserver {
+            NotificationCenter.default.removeObserver(screenObserver)
+        }
     }
 
     func showWaveform(reactive: Bool) {
-        prepareToShow()
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
         spinner.stopAnimation(nil)
         spinner.isHidden = true
         iconView.isHidden = true
         waveform.isHidden = false
         waveform.start(reactive: reactive)
         waveform.setReactive(reactive)
+        revealNow()
     }
 
     func updateAudioLevel(_ level: Float) {
@@ -425,16 +461,19 @@ private final class MicReadinessHUD {
     }
 
     func showSpinner() {
-        prepareToShow()
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
         waveform.stop()
         waveform.isHidden = true
         iconView.isHidden = true
         spinner.isHidden = false
         spinner.startAnimation(nil)
+        revealNow()
     }
 
     func showErrorBriefly(duration: TimeInterval = 1.2) {
-        prepareToShow()
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
         waveform.stop()
         waveform.isHidden = true
         spinner.stopAnimation(nil)
@@ -444,6 +483,7 @@ private final class MicReadinessHUD {
             systemSymbolName: "exclamationmark.triangle.fill",
             accessibilityDescription: "Microphone unavailable"
         )
+        revealNow()
         let work = DispatchWorkItem { [weak self] in self?.hide() }
         hideWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: work)
@@ -454,16 +494,23 @@ private final class MicReadinessHUD {
         hideWorkItem = nil
         spinner.stopAnimation(nil)
         waveform.stop()
-        panel.orderOut(nil)
+        // Stay ordered-front at alpha 0 — next press is a flip, not a window create.
+        panel.alphaValue = 0
         isVisible = false
     }
 
-    private func prepareToShow() {
-        hideWorkItem?.cancel()
-        hideWorkItem = nil
-        positionOnActiveScreen()
-        panel.orderFrontRegardless()
+    private func revealNow() {
+        if !isVisible {
+            positionOnActiveScreen()
+        }
         isVisible = true
+        panel.alphaValue = 1
+        // Paint inside this HID callback turn so the frame can composite before we
+        // go on to block the runloop with IOHID SetReport / capture start.
+        waveform.display()
+        spinner.display()
+        panel.display()
+        CATransaction.flush()
     }
 
     private func positionOnActiveScreen() {
@@ -912,17 +959,15 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     }
 
     func updateMicReadiness(_ state: MicReadinessPresentationState) {
-        DispatchQueue.main.async { [weak self] in
+        let apply = { [weak self] in
             guard let self else { return }
-            self.applyStatusIcon(for: state)
 
-            // Global floating HUD — visible without opening the menu.
+            // Global floating HUD first — status-item chrome is secondary.
             switch state {
             case .warming(let showHUD):
-                if showHUD {
-                    self.micReadinessHUD.showSpinner()
-                } else if self.micReadinessHUD.isVisible {
-                    self.micReadinessHUD.showSpinner()
+                // Keep the breathing wave during warm-up; spinner is reserved for ASR.
+                if showHUD || self.micReadinessHUD.isVisible {
+                    self.micReadinessHUD.showWaveform(reactive: false)
                 }
             case .readyToSpeak:
                 self.micReadinessHUD.showWaveform(reactive: false)
@@ -939,12 +984,23 @@ class MenuBarManager: NSObject, NSMenuDelegate {
                 // and leaves the screen once the utterance settles.
                 self.micReadinessHUD.hide()
             }
+
+            self.applyStatusIcon(for: state)
+        }
+        if Thread.isMainThread {
+            apply()
+        } else {
+            DispatchQueue.main.async(execute: apply)
         }
     }
 
     func updateMicAudioLevel(_ level: Float) {
-        DispatchQueue.main.async { [weak self] in
-            self?.micReadinessHUD.updateAudioLevel(level)
+        if Thread.isMainThread {
+            micReadinessHUD.updateAudioLevel(level)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.micReadinessHUD.updateAudioLevel(level)
+            }
         }
     }
 
