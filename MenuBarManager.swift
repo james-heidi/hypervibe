@@ -445,6 +445,68 @@ private final class MicReadinessHUD {
     }
 }
 
+/// Trackpad swipe directions (single-finger flicks). Detection happens in TouchHandler;
+/// execution is dispatched here so mappings live alongside button mappings.
+enum SwipeDirection: String, CaseIterable {
+    case up, down, left, right
+}
+
+/// Action a swipe can trigger. Slash-command cases type the raw value (without Enter — user
+/// presses Enter themselves). `leftArrow`/`rightArrow` send virtual arrow keys instead of text.
+/// `init` is a Swift keyword so the case name is backtick-escaped. Raw values remain stable for
+/// persistence and typing; `displayName` is used only for menu presentation.
+enum SwipeAction: String, CaseIterable {
+    // Priority order: direction-matched arrow (filtered per submenu), then Mode Switching,
+    // then ultrathink, then slash commands alphabetically, None last.
+    case leftArrow     = "Left: Navigate Left"
+    case rightArrow    = "Right: Navigate Right"
+    case modeSwitch    = "Mode Switching (Shift + Tab)"
+    case ultrathink    = "ultrathink"
+    case btw           = "/btw"
+    case compact       = "/compact"
+    case config        = "/config"
+    case context       = "/context"
+    case effort        = "/effort"
+    case `init`        = "/init"
+    case model         = "/model"
+    case remoteControl = "/remote-control"
+    case schedule      = "/schedule"
+    case tasks         = "/tasks"
+    case usage         = "/usage"
+    case none          = "None"
+
+    var displayName: String {
+        switch self {
+        case .leftArrow: return "左:向左导航"
+        case .rightArrow: return "右:向右导航"
+        case .modeSwitch: return "模式切换 (Shift + Tab)"
+        case .none: return "无"
+        default: return rawValue
+        }
+    }
+
+    /// Gesture typing policy: argument-taking commands get a trailing space so the
+    /// user continues typing; standalone/picker commands don't. Gestures never send Enter.
+    var trailingSpace: Bool {
+        switch self {
+        case .btw, .schedule, .ultrathink: return true
+        default: return false
+        }
+    }
+
+    /// Gesture-era defaults — the A2540 default profile ships these.
+    static let a2540Defaults: [SwipeDirection: SwipeAction] = [
+        .up:    .usage,
+        .down:  .compact,
+        .left:  .model,
+        .right: .modeSwitch,
+    ]
+
+    static func defaults(for model: RemoteModel) -> [SwipeDirection: SwipeAction] {
+        model == .a2540 ? a2540Defaults : [:]
+    }
+}
+
 class MenuBarManager: NSObject, NSMenuDelegate {
     private enum MenuTag {
         static let parakeetEngine = 91001
@@ -466,6 +528,10 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     
     // Button mappings (live copy of the active profile)
     private var buttonMappings: [String: ButtonAction] = [:]
+
+    /// Swipe gesture mappings in effect (resolved from the active profile +
+    /// bound model defaults in applyActiveProfile).
+    private var swipeMappings: [SwipeDirection: SwipeAction] = [:]
 
     // Scroll speed (used for trackpad scroll scale; stored in the active profile)
     private(set) var scrollSpeed: ScrollSpeed = .medium
@@ -508,6 +574,10 @@ class MenuBarManager: NSObject, NSMenuDelegate {
 
     /// Reload menu button labels when the connected remote adapter changes.
     func noteActiveRemoteChanged() {
+        // Per-model profile isolation: bind the connected model (seeding its
+        // default on first contact) and apply that model's profile.
+        profileStore.bind(model: RemoteAdapterRegistry.activeAdapter.model)
+        applyActiveProfile(notifyHandlers: true)
         requestMenuRebuild()
     }
 
@@ -520,6 +590,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         }
         trackpadControlEnabled = profile.trackpadControlEnabled
         scrollSpeed = profile.decodedScrollSpeed
+        swipeMappings = profileStore.activeSwipeMappings
         guard notifyHandlers else { return }
         onTrackpadControlToggle?(trackpadControlEnabled)
         onScrollSpeedChange?(scrollSpeed)
@@ -1030,6 +1101,41 @@ class MenuBarManager: NSObject, NSMenuDelegate {
 
         mappingsItem.submenu = mappingsSubmenu
         menu.addItem(mappingsItem)
+
+        addSwipeGesturesMenu()
+    }
+
+    private func addSwipeGesturesMenu() {
+        let swipeItem = NSMenuItem(title: "滑动手势", action: nil, keyEquivalent: "")
+        let swipeSubmenu = NSMenu()
+        let directions: [(SwipeDirection, String)] = [
+            (.up, "上滑"), (.down, "下滑"), (.left, "左滑"), (.right, "右滑"),
+        ]
+        for (direction, label) in directions {
+            let dirItem = NSMenuItem(title: label, action: nil, keyEquivalent: "")
+            let actionsMenu = NSMenu()
+            // Each arrow-key action only appears on its matching swipe direction.
+            let options = SwipeAction.allCases.filter { action in
+                if action == .leftArrow { return direction == .left }
+                if action == .rightArrow { return direction == .right }
+                return true
+            }
+            addStickyChoices(
+                to: actionsMenu,
+                options: options,
+                title: { $0.displayName },
+                isOn: { [weak self] action in self?.swipeMappings[direction] == action },
+                onSelect: { [weak self] action in
+                    guard let self else { return }
+                    self.swipeMappings[direction] = action
+                    self.profileStore.updateActive(swipeMappings: self.swipeMappings)
+                }
+            )
+            dirItem.submenu = actionsMenu
+            swipeSubmenu.addItem(dirItem)
+        }
+        swipeItem.submenu = swipeSubmenu
+        menu.addItem(swipeItem)
     }
 
     private func selectProfile(id: UUID) {
@@ -1452,6 +1558,27 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     
     /// Post the given string as a single keyboard event via `keyboardSetUnicodeString`.
     /// Works across terminals and most text fields; bypasses layout-specific key codes.
+    func executeSwipe(_ direction: SwipeDirection) {
+        executeSwipeAction(swipeMappings[direction] ?? .none)
+    }
+
+    func executeSwipeAction(_ action: SwipeAction) {
+        switch action {
+        case .none:
+            break
+        case .leftArrow:
+            sendKey(kVK_LeftArrow)
+        case .rightArrow:
+            sendKey(kVK_RightArrow)
+        case .modeSwitch:
+            sendKey(kVK_Tab, flags: .maskShift)
+        default:
+            // Gesture typing policy: trailing space only for argument-taking
+            // commands; gestures never send Enter (AGENTS.md invariant).
+            typeString(action.rawValue + (action.trailingSpace ? " " : ""))
+        }
+    }
+
     func typeDictationText(_ text: String) {
         typeString(text)
     }

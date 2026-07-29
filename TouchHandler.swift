@@ -58,7 +58,15 @@ class TouchHandler {
     private let cursorScale: CGFloat = 500.0
     private let tapMaxDuration: Double = 0.22
     private let tapMaxDistance: CGFloat = 0.07
+    // Swipe detection: velocity-gated single-finger flick. Distance > 35% of trackpad in < 350ms,
+    // with the dominant axis at least 2× the orthogonal axis (rejects diagonal wobble).
+    private let swipeMinDistance: CGFloat = 0.35
+    private let swipeMaxDuration: Double = 0.35
+    private let swipeAxisRatio: CGFloat = 2.0
     private var hadMultipleFingersInSession = false
+
+    /// Fired on touch-up when a single-finger flick is detected. Dispatched on main.
+    var onSwipe: ((SwipeDirection) -> Void)?
 
     private let reconnectInterval: TimeInterval = 2.0
     private let idleTimeout: TimeInterval = 90.0
@@ -97,7 +105,7 @@ class TouchHandler {
         stopDevice()
     }
 
-    /// Keep the touch device running so the trackpad stays available, while
+    /// Keep the touch device running so swipe commands continue to work, while
     /// independently suppressing pointer movement, scrolling, and tap-to-click.
     func setTrackpadControlEnabled(_ enabled: Bool) {
         if Thread.isMainThread {
@@ -324,6 +332,27 @@ class TouchHandler {
         let dx = (lastTouchPosition?.x ?? 0) - touchStartPosition.x
         let dy = (lastTouchPosition?.y ?? 0) - touchStartPosition.y
         let movement = hypot(dx, dy)
+
+        // Swipe detection (flick). Fires before tap check; distance threshold is well above
+        // tapMaxDistance, so a swipe can never also register as a tap.
+        if duration < swipeMaxDuration && movement > swipeMinDistance {
+            let absDx = abs(dx), absDy = abs(dy)
+            let direction: SwipeDirection?
+            if absDx > absDy * swipeAxisRatio {
+                direction = dx > 0 ? .right : .left
+            } else if absDy > absDx * swipeAxisRatio {
+                // MultitouchSupport reports y increasing toward the top of the trackpad.
+                direction = dy > 0 ? .up : .down
+            } else {
+                direction = nil
+            }
+            if let direction = direction {
+                DispatchQueue.main.async { [weak self] in
+                    self?.onSwipe?(direction)
+                }
+                return
+            }
+        }
 
         if duration < tapMaxDuration && movement < tapMaxDistance {
             DispatchQueue.main.async { [weak self] in

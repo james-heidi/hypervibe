@@ -28,7 +28,7 @@ open HyperVibe.app
 | `RemoteInputHandler.swift` | Raw HID button events → mapped actions; 200 ms debounce shared with MediaKeyInterceptor |
 | `MediaKeyInterceptor.swift` | CGEvent tap catching AVRCP media keys (NX_SYSDEFINED path) |
 | `MediaController.swift` | Synthesizes NX_SYSDEFINED media-key events |
-| `TouchHandler.swift` | Trackpad via private MultitouchSupport: cursor, scroll, tap |
+| `TouchHandler.swift` | Trackpad via private MultitouchSupport: cursor, scroll, tap, swipe gestures |
 | `CursorController.swift` | Posts mouse events |
 | `SystemVolume.swift` | Volume get/set + `VolumeRevertGuard` |
 | `RemoteMicController.swift` | A2854 push-to-talk orchestration: activate + capture + decode + selected engine |
@@ -60,5 +60,5 @@ open HyperVibe.app
 ## Conventions
 
 - Remote HID identity lives in `RemoteAdapter` / `RemoteAdapterRegistry` (not a switch inside `RemoteInputHandler`). Add model-specific usages on the concrete adapter.
-- User layouts are `MappingProfileStore` JSON profiles (mappings + trackpad + scroll), not live UserDefaults `buttonMappings` after migration.
+- User layouts are `MappingProfileStore` JSON profiles (mappings + trackpad + scroll + swipe gestures), not live UserDefaults `buttonMappings` after migration. Active profile is bound **per remote model** (`activeProfileByModel`) — A2540 and A2854 configs are isolated; selection in the menu binds only the connected model.
 - Long-term direction: migrate primary input to Xbox Adaptive Joystick (public GameController.framework) — keep Siri Remote path best-effort.
