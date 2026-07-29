@@ -38,6 +38,8 @@ protocol RemoteAdapter {
     var model: RemoteModel { get }
     var productIDs: Set<Int> { get }
     var displayName: String { get }
+    /// Short model tag for the menu status row (e.g. "A2854").
+    var modelLabel: String { get }
     func identifyButton(page: UInt32, usage: UInt32) -> LogicalButton?
     var menuButtons: [(key: String, label: String)] { get }
     var holdCapableButtons: Set<String> { get }
@@ -131,6 +133,7 @@ struct A2540Adapter: RemoteAdapter {
     let model: RemoteModel = .a2540
     let productIDs: Set<Int> = [0x0314]
     let displayName = "Siri Remote (A2540)"
+    let modelLabel = "A2540"
 
     func identifyButton(page: UInt32, usage: UInt32) -> LogicalButton? {
         SiriRemoteLayout.identifyButton(page: page, usage: usage)
@@ -145,6 +148,7 @@ struct A2854Adapter: RemoteAdapter {
     let model: RemoteModel = .a2854
     let productIDs: Set<Int> = [0x0315]
     let displayName = "Siri Remote (A2854)"
+    let modelLabel = "A2854"
 
     func identifyButton(page: UInt32, usage: UInt32) -> LogicalButton? {
         SiriRemoteLayout.identifyButton(page: page, usage: usage)
@@ -160,6 +164,7 @@ struct UnknownRemoteAdapter: RemoteAdapter {
     let model: RemoteModel = .unknown
     let productIDs: Set<Int> = SiriRemoteLayout.legacyProductIDs
     let displayName = "Siri Remote"
+    let modelLabel = "Siri Remote"
 
     func identifyButton(page: UInt32, usage: UInt32) -> LogicalButton? {
         SiriRemoteLayout.identifyButton(page: page, usage: usage)

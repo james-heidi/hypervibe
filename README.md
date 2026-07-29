@@ -65,6 +65,8 @@ Named **配置档** (profiles) store button mappings, trackpad-mouse enablement,
 
 HID page/usage decoding is per remote model (`RemoteAdapter`: A2540, A2854, legacy/unknown). Product IDs and identify tables live in the adapter registry; shared code only sees logical buttons (`menu`, `tv`, `ringUp`, …).
 
+When a remote is connected, the top row of the menu-bar dropdown shows the active model directly (e.g. `✅ A2854`), so you can tell which adapter — and therefore which button layout and defaults — is in effect. It reads `未连接` when no remote is paired.
+
 ### Safety
 
 - **Stale-hold self-heal.** If a release HID event is ever missed, the next press closes the stale hold before opening a new one.

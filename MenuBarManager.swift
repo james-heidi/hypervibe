@@ -654,7 +654,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     private func rebuildMenu() {
         menu.removeAllItems()
 
-        statusMenuItem.title = remoteConnected ? "已连接 ✓" : "未连接"
+        statusMenuItem.title = connectionStatusTitle()
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
 
@@ -1109,12 +1109,19 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         requestMenuRebuild()
     }
 
+    /// Connected rows name the remote model — the adapter decides button layout,
+    /// so which one is live is the useful fact, not a redundant "connected".
+    private func connectionStatusTitle() -> String {
+        guard remoteConnected else { return "未连接" }
+        return "✅ \(RemoteAdapterRegistry.activeAdapter.modelLabel)"
+    }
+
     func updateConnectionStatus(connected: Bool) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             let changed = self.remoteConnected != connected
             self.remoteConnected = connected
-            self.statusMenuItem.title = connected ? "已连接 ✓" : "未连接"
+            self.statusMenuItem.title = self.connectionStatusTitle()
             self.statusItem.button?.appearsDisabled = !connected
             if changed {
                 self.requestMenuRebuild()
