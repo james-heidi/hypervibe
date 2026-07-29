@@ -66,6 +66,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarManager.onScrollSpeedChange = { [weak touchInputHandler] speed in
             touchInputHandler?.scrollScale = speed.scale
         }
+        touchInputHandler.onSwipe = { [weak menuBarManager] direction in
+            menuBarManager?.executeSwipe(direction)
+        }
         touchInputHandler.start()
         remoteInputHandler?.onButtonActivity = { [weak self] in
             self?.touchHandler?.tryReconnectTrackpad()

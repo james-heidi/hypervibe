@@ -30,6 +30,10 @@ struct MappingProfile: Codable, Equatable, Identifiable {
     var mappings: [String: String]
     var trackpadControlEnabled: Bool
     var scrollSpeed: String
+    /// Swipe gesture mappings (direction rawValue → SwipeAction rawValue).
+    /// Optional so pre-gesture profile JSON decodes untouched; nil resolves to
+    /// the bound remote model's defaults.
+    var swipeMappings: [String: String]?
     var updatedAt: Date
 
     static func make(
@@ -37,6 +41,7 @@ struct MappingProfile: Codable, Equatable, Identifiable {
         mappings: [String: ButtonAction],
         trackpadControlEnabled: Bool,
         scrollSpeed: ScrollSpeed,
+        swipeMappings: [SwipeDirection: SwipeAction]? = nil,
         id: UUID = UUID()
     ) -> MappingProfile {
         MappingProfile(
@@ -45,8 +50,25 @@ struct MappingProfile: Codable, Equatable, Identifiable {
             mappings: ButtonMappingStore.encodeMappings(mappings),
             trackpadControlEnabled: trackpadControlEnabled,
             scrollSpeed: scrollSpeed.rawValue,
+            swipeMappings: swipeMappings.map(Self.encodeSwipes),
             updatedAt: Date()
         )
+    }
+
+    static func encodeSwipes(_ swipes: [SwipeDirection: SwipeAction]) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: swipes.map { ($0.key.rawValue, $0.value.rawValue) })
+    }
+
+    /// nil when the profile predates gestures — caller resolves model defaults.
+    var decodedSwipeMappings: [SwipeDirection: SwipeAction]? {
+        guard let swipeMappings else { return nil }
+        var out: [SwipeDirection: SwipeAction] = [:]
+        for (rawDirection, rawAction) in swipeMappings {
+            guard let direction = SwipeDirection(rawValue: rawDirection),
+                  let action = SwipeAction(rawValue: rawAction) else { continue }
+            out[direction] = action
+        }
+        return out
     }
 
     var decodedMappings: [String: ButtonAction] {
@@ -61,8 +83,12 @@ struct MappingProfile: Codable, Equatable, Identifiable {
         mappings: [String: ButtonAction]? = nil,
         trackpadControlEnabled: Bool? = nil,
         scrollSpeed: ScrollSpeed? = nil,
+        swipeMappings: [SwipeDirection: SwipeAction]? = nil,
         name: String? = nil
     ) {
+        if let swipeMappings {
+            self.swipeMappings = Self.encodeSwipes(swipeMappings)
+        }
         if let mappings {
             var sanitized = mappings
             _ = ButtonMappingStore.sanitize(&sanitized)
@@ -85,11 +111,26 @@ struct ProfileCatalog: Codable, Equatable {
     static let currentSchema = 1
 
     var schema: Int
+    /// Legacy/global pointer — still written so older builds keep working, and
+    /// used to seed the first per-model binding.
     var activeProfileID: UUID
+    /// Per-remote-model bindings (RemoteModel.rawValue → profile id). Each model
+    /// keeps its own active profile so A2540/A2854 configs never bleed.
+    var activeProfileByModel: [String: UUID]? = nil
     var profiles: [MappingProfile]
 
     var activeProfile: MappingProfile? {
         profiles.first { $0.id == activeProfileID } ?? profiles.first
+    }
+
+    func profileID(for model: RemoteModel) -> UUID? {
+        activeProfileByModel?[model.rawValue]
+    }
+
+    mutating func bind(_ id: UUID, to model: RemoteModel) {
+        var map = activeProfileByModel ?? [:]
+        map[model.rawValue] = id
+        activeProfileByModel = map
     }
 }
 
@@ -124,13 +165,80 @@ final class MappingProfileStore {
     private let fileManager: FileManager
     private var catalog: ProfileCatalog
 
+    static let legacySwipeMappingsKey = "swipeMappings"
+
     var profiles: [MappingProfile] { catalog.profiles }
-    var activeProfileID: UUID { catalog.activeProfileID }
+
+    /// Remote model whose binding is currently in effect. Updated on connect;
+    /// fallback model keeps the legacy pointer semantics when nothing is paired.
+    private(set) var currentModel: RemoteModel = RemoteAdapterRegistry.fallbackAdapter.model
+
+    /// Effective active profile id: per-model binding first, legacy pointer second.
+    var activeProfileID: UUID {
+        if let bound = catalog.profileID(for: currentModel),
+           catalog.profiles.contains(where: { $0.id == bound }) {
+            return bound
+        }
+        return catalog.activeProfileID
+    }
 
     var activeProfile: MappingProfile {
-        if let active = catalog.activeProfile { return active }
+        if let active = catalog.profiles.first(where: { $0.id == activeProfileID }) ?? catalog.activeProfile {
+            return active
+        }
         // Should be unreachable after load/bootstrap.
         return makeSeedProfile(name: "默认")
+    }
+
+    /// Swipe mappings in effect for the active profile: explicit values, else
+    /// the bound model's defaults (A2540 → gesture-era set, others → none).
+    var activeSwipeMappings: [SwipeDirection: SwipeAction] {
+        activeProfile.decodedSwipeMappings ?? SwipeAction.defaults(for: currentModel)
+    }
+
+    /// Bind the connected remote model, seeding a model default profile on first
+    /// contact: A2854 keeps whatever is already active (current behavior);
+    /// A2540 gets the gesture-era configuration.
+    @discardableResult
+    func bind(model: RemoteModel) -> MappingProfile {
+        currentModel = model
+        if let bound = catalog.profileID(for: model),
+           catalog.profiles.contains(where: { $0.id == bound }) {
+            migrateLegacySwipeDefaultsIfNeeded()
+            return activeProfile
+        }
+        let seedID: UUID
+        if model == .a2540 {
+            let seed = MappingProfile.make(
+                name: uniqueName(base: "A2540 默认"),
+                mappings: RemoteAdapterRegistry.a2540.defaultMappings,
+                trackpadControlEnabled: false,
+                scrollSpeed: .medium,
+                swipeMappings: SwipeAction.a2540Defaults
+            )
+            catalog.profiles.append(seed)
+            seedID = seed.id
+        } else {
+            // A2854/unknown: preserve current behavior — bind the legacy pointer.
+            seedID = catalog.activeProfileID
+        }
+        catalog.bind(seedID, to: model)
+        migrateLegacySwipeDefaultsIfNeeded()
+        save()
+        return activeProfile
+    }
+
+    /// One-time migration of pre-profile UserDefaults swipe mappings into the
+    /// bound profile (only when the profile has no swipe mappings of its own).
+    private func migrateLegacySwipeDefaultsIfNeeded() {
+        guard let legacy = defaults.dictionary(forKey: Self.legacySwipeMappingsKey) as? [String: String],
+              !legacy.isEmpty else { return }
+        defaults.removeObject(forKey: Self.legacySwipeMappingsKey)
+        guard let index = indexOfActive(), catalog.profiles[index].swipeMappings == nil else { return }
+        catalog.profiles[index].swipeMappings = legacy
+        catalog.profiles[index].updatedAt = Date()
+        save()
+        rmDebug("🎮 migrated legacy swipe mappings into profile \(catalog.profiles[index].name)")
     }
 
     init(
@@ -204,6 +312,12 @@ final class MappingProfileStore {
         } else if !next.profiles.contains(where: { $0.id == next.activeProfileID }) {
             next.activeProfileID = next.profiles[0].id
         }
+        if var map = next.activeProfileByModel {
+            for (model, bound) in map where !next.profiles.contains(where: { $0.id == bound }) {
+                map[model] = nil
+            }
+            next.activeProfileByModel = map.isEmpty ? nil : map
+        }
         for index in next.profiles.indices {
             var mappings = next.profiles[index].decodedMappings
             for (button, action) in ButtonMappingStore.defaults where mappings[button] == nil {
@@ -265,7 +379,7 @@ final class MappingProfileStore {
     }
 
     private func indexOfActive() -> Int? {
-        catalog.profiles.firstIndex { $0.id == catalog.activeProfileID }
+        catalog.profiles.firstIndex { $0.id == activeProfileID }
     }
 
     // MARK: - Mutations
@@ -275,6 +389,9 @@ final class MappingProfileStore {
         guard catalog.profiles.contains(where: { $0.id == id }) else {
             throw MappingProfileStoreError.notFound
         }
+        // Selection binds the CONNECTED model only; legacy pointer follows for
+        // old-build compatibility. Other models' bindings are untouched.
+        catalog.bind(id, to: currentModel)
         catalog.activeProfileID = id
         save()
         return activeProfile
@@ -297,6 +414,7 @@ final class MappingProfileStore {
         }
         catalog.profiles.append(profile)
         catalog.activeProfileID = profile.id
+        catalog.bind(profile.id, to: currentModel)
         save()
         return profile
     }
@@ -325,6 +443,7 @@ final class MappingProfileStore {
         copy.updatedAt = Date()
         catalog.profiles.append(copy)
         catalog.activeProfileID = copy.id
+        catalog.bind(copy.id, to: currentModel)
         save()
         return copy
     }
@@ -339,6 +458,13 @@ final class MappingProfileStore {
         catalog.profiles.remove(at: index)
         if catalog.activeProfileID == id {
             catalog.activeProfileID = catalog.profiles[0].id
+        }
+        // Repoint any model binding that referenced the deleted profile.
+        if var map = catalog.activeProfileByModel {
+            for (model, bound) in map where bound == id {
+                map[model] = catalog.profiles[0].id
+            }
+            catalog.activeProfileByModel = map
         }
         save()
     }
@@ -366,13 +492,15 @@ final class MappingProfileStore {
     func updateActive(
         mappings: [String: ButtonAction]? = nil,
         trackpadControlEnabled: Bool? = nil,
-        scrollSpeed: ScrollSpeed? = nil
+        scrollSpeed: ScrollSpeed? = nil,
+        swipeMappings: [SwipeDirection: SwipeAction]? = nil
     ) {
         guard let index = indexOfActive() else { return }
         catalog.profiles[index].apply(
             mappings: mappings,
             trackpadControlEnabled: trackpadControlEnabled,
-            scrollSpeed: scrollSpeed
+            scrollSpeed: scrollSpeed,
+            swipeMappings: swipeMappings
         )
         save()
     }
