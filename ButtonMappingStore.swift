@@ -2,43 +2,19 @@
 //  ButtonMappingStore.swift
 //  HyperVibe
 //
-//  Pure source of truth for Siri Remote button → action defaults and schema
-//  migrations. MenuBarManager is glue around UserDefaults persistence.
+//  Defaults, sanitize, and one-shot UserDefaults → profile migration helpers.
+//  Live mappings live in MappingProfileStore after migration.
 //
 
 import Foundation
 
 enum ButtonMappingStore {
-    /// Confirmed product defaults for fresh installs / schema-10 reset.
-    static let defaults: [String: ButtonAction] = [
-        "playPause": .escKey,
-        "menu": .commandBackspace,
-        "select": .enterKey,
-        "ringUp": .upKey,
-        "ringDown": .downKey,
-        "ringLeft": .leftKey,
-        "ringRight": .rightKey,
-        "volumeUp": .volumeUp,
-        "volumeDown": .volumeDown,
-        "mute": .mute,
-        "tv": .recoverDictation,
-    ]
+    /// Confirmed product defaults for fresh installs / adapter reset.
+    static var defaults: [String: ButtonAction] { SiriRemoteLayout.defaultMappings }
 
     /// Buttons shown in the 按键映射 submenu — kept here so tests can catch drift
     /// against `defaults` keys.
-    static let menuButtons: [(key: String, label: String)] = [
-        ("select", "触控板点击"),
-        ("ringUp", "环上"),
-        ("ringDown", "环下"),
-        ("ringLeft", "环左"),
-        ("ringRight", "环右"),
-        ("menu", "返回键 ‹"),
-        ("tv", "TV 键"),
-        ("playPause", "播放/暂停"),
-        ("volumeUp", "音量 +"),
-        ("volumeDown", "音量 −"),
-        ("mute", "静音键"),
-    ]
+    static var menuButtons: [(key: String, label: String)] { SiriRemoteLayout.menuButtons }
 
     static let currentSchema = 10
 
@@ -129,5 +105,24 @@ enum ButtonMappingStore {
 
     static func resetToDefaults() -> [String: ButtonAction] {
         defaults
+    }
+
+    static func encodeMappings(_ mappings: [String: ButtonAction]) -> [String: String] {
+        var encoded: [String: String] = [:]
+        for (button, action) in mappings {
+            encoded[button] = action.rawValue
+        }
+        return encoded
+    }
+
+    static func decodeMappings(_ raw: [String: String]) -> [String: ButtonAction] {
+        var mappings: [String: ButtonAction] = [:]
+        for (button, actionRaw) in raw {
+            if let action = ButtonAction(rawValue: actionRaw) {
+                mappings[button] = action
+            }
+        }
+        sanitize(&mappings)
+        return mappings
     }
 }

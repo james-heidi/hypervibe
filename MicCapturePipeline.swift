@@ -131,11 +131,7 @@ final class MicCapturePipeline {
         task.waitUntilExit()
         let text = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
 
-        // Known Siri Remote / Apple TV Remote product IDs (mirror RemoteDetector).
-        let knownRemotePIDs: Set<Int> = [
-            0x0221, 0x0255, 0x0266, 0x0267, 0x0269,
-            0x0C4E, 0x0C4F, 0x030D, 0x030E, 0x0314, 0x0315,
-        ]
+        let knownRemotePIDs = RemoteAdapterRegistry.allKnownProductIDs
 
         // Walk each connected-device block. A block opens at a device-name header (a
         // trimmed line ending in ":" that is not a "Key: value" property) and matches

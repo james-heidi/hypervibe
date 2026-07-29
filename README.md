@@ -59,7 +59,11 @@ Each physical Siri Remote button is independently assignable via the menu bar.
 
 ### Persistence
 
-Button mappings are saved to UserDefaults (`buttonMappings`) and survive restarts. Schema versioning handles future upgrades (`buttonMappingsSchema`).
+Named **配置档** (profiles) store button mappings, trackpad-mouse enablement, and scroll speed as JSON under `~/Library/Application Support/HyperVibe/profiles.json`. Existing UserDefaults mappings migrate once into a profile named **默认**. Use the menu-bar **配置档** submenu to create, rename, duplicate, delete, import, and export profiles (single profile or full catalog JSON).
+
+### Remote adapters
+
+HID page/usage decoding is per remote model (`RemoteAdapter`: A2540, A2854, legacy/unknown). Product IDs and identify tables live in the adapter registry; shared code only sees logical buttons (`menu`, `tv`, `ringUp`, …).
 
 ### Safety
 
@@ -137,7 +141,7 @@ This is the standard reverse-engineered technique (originally surfaced in projec
 ### Long-term direction: Xbox Adaptive Joystick
 
 Between the private `MultitouchSupport` framework and the undocumented `NX_SYSDEFINED` plumbing, the Siri Remote path is built on two proprietary, reverse-engineered interfaces that Apple can break at any time. HyperVibe may migrate its primary input to the **Xbox Adaptive Joystick**, which speaks standard USB HID / GameController.framework and avoids every proprietary hazard above. That gives a more permanent, App Store–viable foundation — and, as a bonus, a genuinely accessible input device — while the Siri Remote support remains as a best-effort path for users who already own one.
-- Tested on **Siri Remote 1st-gen (A1513, product ID `0x266`)**. Button HID codes are a superset likely to cover the 2nd-gen Siri Remote (A2540) as well, but its click-ring directional presses and dedicated Mute button are not yet mapped in `identifyButton`.
+- Tested on **Siri Remote 1st-gen (A1513, product ID `0x266`)** and **2nd-gen (A2540, `0x0314`) / USB-C (A2854, `0x0315`)**. Per-model adapters share a HID table today; diverge in `RemoteAdapter` when a usage differs.
 - Ad-hoc signing ties TCC permission grants to the exact binary hash — rebuilds may require re-approval in System Settings.
 
 ---

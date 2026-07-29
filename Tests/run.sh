@@ -111,9 +111,32 @@ xcrun swiftc \
     Tests/ButtonMappingStoreTests.swift \
     ButtonMappingStore.swift \
     ButtonActions.swift \
+    RemoteAdapter.swift \
+    Tests/RMDebugStub.swift \
     -framework Foundation \
     -o /tmp/hypervibe-mapping-tests
 /tmp/hypervibe-mapping-tests
+
+xcrun swiftc \
+    Tests/RemoteAdapterTests.swift \
+    RemoteAdapter.swift \
+    ButtonActions.swift \
+    Tests/RMDebugStub.swift \
+    -framework Foundation \
+    -o /tmp/hypervibe-adapter-tests
+/tmp/hypervibe-adapter-tests
+
+xcrun swiftc \
+    Tests/MappingProfileStoreTests.swift \
+    MappingProfileStore.swift \
+    ButtonMappingStore.swift \
+    ButtonActions.swift \
+    RemoteAdapter.swift \
+    Tests/RMDebugStub.swift \
+    -framework Foundation \
+    -framework CoreGraphics \
+    -o /tmp/hypervibe-profile-tests
+/tmp/hypervibe-profile-tests
 
 xcrun swiftc \
     Tests/DictationRecoveryTests.swift \

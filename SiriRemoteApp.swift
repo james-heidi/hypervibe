@@ -9,6 +9,7 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import Darwin
+import IOKit.hid
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     
@@ -61,6 +62,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarManager.onTrackpadControlToggle = { [weak inputHandler, weak touchInputHandler] enabled in
             inputHandler?.setTrackpadControlEnabled(enabled)
             touchInputHandler?.setTrackpadControlEnabled(enabled)
+        }
+        menuBarManager.onScrollSpeedChange = { [weak touchInputHandler] speed in
+            touchInputHandler?.scrollScale = speed.scale
         }
         touchInputHandler.start()
         remoteInputHandler?.onButtonActivity = { [weak self] in
@@ -177,6 +181,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Start remote detection
         remoteDetector = RemoteDetector { [weak self] device in
             DispatchQueue.main.async {
+                if let device {
+                    let productID = IOHIDDeviceGetProperty(
+                        device,
+                        kIOHIDProductIDKey as CFString
+                    ) as? Int
+                    RemoteAdapterRegistry.setActive(productID: productID)
+                } else {
+                    RemoteAdapterRegistry.setActive(productID: nil)
+                }
+                self?.menuBarManager.noteActiveRemoteChanged()
                 self?.remoteInputHandler?.setRemoteDevice(device)
                 self?.menuBarManager.updateConnectionStatus(connected: device != nil)
                 if let devices = self?.remoteInputHandler?.seizedDevices {
