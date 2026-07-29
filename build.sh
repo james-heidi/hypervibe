@@ -20,6 +20,8 @@ SWIFT_FILES=(
     "OnboardingWindowController.swift"
     "HelperInstallCoordinator.swift"
     "ButtonMappingStore.swift"
+    "RemoteAdapter.swift"
+    "MappingProfileStore.swift"
     "DictationRecovery.swift"
     "WaveGlyph.swift"
     "ModelPreparation.swift"

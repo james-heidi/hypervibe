@@ -130,23 +130,48 @@ final class MicCapturePipeline {
         do { try task.run() } catch { return nil }
         task.waitUntilExit()
         let text = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        // Look for Apple TV Remote block then Address:
-        var inRemote = false
-        for line in text.components(separatedBy: .newlines) {
-            if line.localizedCaseInsensitiveContains("Apple TV") && line.localizedCaseInsensitiveContains("Remote") {
-                inRemote = true
-                continue
-            }
-            if inRemote, line.contains("Address:") {
-                let parts = line.split(separator: ":")
-                if parts.count >= 2 {
-                    let addr = parts.dropFirst().joined(separator: ":")
-                        .trimmingCharacters(in: .whitespaces)
+
+        let knownRemotePIDs = RemoteAdapterRegistry.allKnownProductIDs
+
+        // Walk each connected-device block. A block opens at a device-name header (a
+        // trimmed line ending in ":" that is not a "Key: value" property) and matches
+        // either by a known remote product ID or an "Apple TV Remote"-style name. The
+        // A2540 advertises a bare serial (e.g. DL3FN09R17FC), so the product-ID check
+        // is what actually catches it; the name check keeps older remotes working.
+        func isNameHeader(_ line: String) -> Bool {
+            guard line.hasSuffix(":") else { return false }
+            return !line.dropLast().contains(":")
+        }
+
+        var inConnected = false
+        var currentAddress: String?
+        var nameLooksLikeRemote = false
+        for raw in text.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty { continue }
+            if line.hasPrefix("Connected:") { inConnected = true; continue }
+            if line.hasPrefix("Not Connected:") { break }
+            guard inConnected else { continue }
+
+            if isNameHeader(line) {
+                currentAddress = nil
+                let lower = line.lowercased()
+                nameLooksLikeRemote = lower.contains("remote")
+                    || lower.contains("siri") || lower.contains("apple tv")
+            } else if line.hasPrefix("Address:") {
+                currentAddress = line
+                    .replacingOccurrences(of: "Address:", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+                if nameLooksLikeRemote, let addr = currentAddress { return addr }
+            } else if line.hasPrefix("Product ID:") {
+                let hex = line
+                    .replacingOccurrences(of: "Product ID:", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+                    .replacingOccurrences(of: "0x", with: "")
+                if let pid = Int(hex, radix: 16), knownRemotePIDs.contains(pid),
+                   let addr = currentAddress {
                     return addr
                 }
-            }
-            if inRemote && line.contains("Not Connected:") {
-                break
             }
         }
         return nil
@@ -386,30 +411,36 @@ final class MicCapturePipeline {
     }
 
     private func handleLine(_ line: String) {
-        // PacketLogger nhdr text: includes RECV/SEND and a BD_ADDR plus hex payload.
+        // PacketLogger nhdr text: RECV/SEND + hex payload. Event lines carry a BD_ADDR;
+        // ACL data lines are keyed by connection handle only (see the split below).
         let upper = line.uppercased()
         guard upper.contains("RECV") else { return }
-        if !remoteAddress.isEmpty {
-            let compactRemote = remoteAddress.replacingOccurrences(of: ":", with: "")
-            let compactLine = upper.replacingOccurrences(of: ":", with: "")
-                .replacingOccurrences(of: "-", with: "")
-            // Allow all-zero addr quirk from PacketLogger and exact match.
-            let wildcard = upper.contains("00:00:00:00:00:00")
-            let namedRemote = upper.contains("APPLE TV") && upper.contains("REMOTE")
-            if !wildcard && !namedRemote
-                && !upper.contains(remoteAddress) && !compactLine.contains(compactRemote) {
-                return
-            }
-        }
 
         let payload: Data?
         if let packet = Self.hciACLPacket(from: line) {
+            // Voice arrives as ACL data keyed by connection handle; nhdr does NOT
+            // stamp a BD_ADDR on ACL lines, so the address pre-filter below must be
+            // skipped here or every voice frame is dropped. The strict ATT/Opus
+            // checks in consumeACL are the real filter.
             // PacketLogger emits the 102-byte ATT notification over a 90-byte
             // first ACL fragment plus a 16-byte continuation. Reassemble before
             // interpreting the 99-byte A2854 report.
             payload = consumeACL(packet)
         } else {
-            // Supports synthetic tests and already-reassembled trace formats.
+            // Non-ACL lines carry a BD_ADDR: keep the address pre-filter so a
+            // synthetic / reassembled trace doesn't decode another device's traffic.
+            if !remoteAddress.isEmpty {
+                let compactRemote = remoteAddress.replacingOccurrences(of: ":", with: "")
+                let compactLine = upper.replacingOccurrences(of: ":", with: "")
+                    .replacingOccurrences(of: "-", with: "")
+                // Allow all-zero addr quirk from PacketLogger and exact match.
+                let wildcard = upper.contains("00:00:00:00:00:00")
+                let namedRemote = upper.contains("APPLE TV") && upper.contains("REMOTE")
+                if !wildcard && !namedRemote
+                    && !upper.contains(remoteAddress) && !compactLine.contains(compactRemote) {
+                    return
+                }
+            }
             payload = Self.extractA2854Payload(from: line)
         }
         guard let payload else { return }

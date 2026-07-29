@@ -8,6 +8,7 @@
 import AppKit
 import Carbon.HIToolbox
 import QuartzCore
+import UniformTypeIdentifiers
 
 extension NSAlert {
     /// Build an alert without the menu-bar app's placeholder icon.
@@ -148,21 +149,6 @@ private final class HyperVibeAlertPanel: NSObject {
     @objc private func buttonPressed(_ sender: NSButton) {
         let rawValue = NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + sender.tag
         NSApp.stopModal(withCode: NSApplication.ModalResponse(rawValue: rawValue))
-    }
-}
-
-// Scroll speed options
-enum ScrollSpeed: String, CaseIterable {
-    case slow = "Slow"
-    case medium = "Medium"
-    case fast = "Fast"
-    
-    var scale: CGFloat {
-        switch self {
-        case .slow: return 150.0
-        case .medium: return 300.0
-        case .fast: return 500.0
-        }
     }
 }
 
@@ -460,7 +446,6 @@ private final class MicReadinessHUD {
 }
 
 class MenuBarManager: NSObject, NSMenuDelegate {
-    private static let trackpadControlEnabledDefaultsKey = "trackpadControlEnabled"
     private enum MenuTag {
         static let parakeetEngine = 91001
         static let downloadProgress = 91002
@@ -473,15 +458,16 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     private let statusMenuItem: NSMenuItem
     private let micReadinessHUD = MicReadinessHUD()
     private let statusSpinner = NSProgressIndicator()
+    private let profileStore: MappingProfileStore
     private var remoteConnected = false
     private var menuIsOpen = false
     private var rebuildAfterMenuCloses = false
     private(set) var trackpadControlEnabled = false
     
-    // Button mappings (stored in UserDefaults)
+    // Button mappings (live copy of the active profile)
     private var buttonMappings: [String: ButtonAction] = [:]
 
-    // Scroll speed (used for trackpad scroll scale; no menu, native multitouch)
+    // Scroll speed (used for trackpad scroll scale; stored in the active profile)
     private(set) var scrollSpeed: ScrollSpeed = .medium
 
     /// Set by app delegate so menu bar can delegate media actions to MediaController.
@@ -489,6 +475,8 @@ class MenuBarManager: NSObject, NSMenuDelegate {
 
     /// Set by AppDelegate to update touch and physical-click handling immediately.
     var onTrackpadControlToggle: ((Bool) -> Void)?
+    /// Set by AppDelegate when the active profile's scroll scale changes.
+    var onScrollSpeedChange: ((ScrollSpeed) -> Void)?
 
     /// Dictation is always on; AppDelegate ensures helper + capture after install/launch.
     var onEnsureDictationEnabled: (() -> Void)?
@@ -505,50 +493,44 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     var polishLocalSummary = "需 macOS 26+"
     var polishCloudSummary = "需 OpenAI Key"
 
-    init(statusItem: NSStatusItem) {
+    init(statusItem: NSStatusItem, profileStore: MappingProfileStore = .shared) {
         self.statusItem = statusItem
         self.menu = NSMenu()
         self.statusMenuItem = NSMenuItem(title: "未连接", action: nil, keyEquivalent: "")
+        self.profileStore = profileStore
         super.init()
         
-        loadMappings()
-        loadTrackpadControlEnabled()
+        applyActiveProfile(notifyHandlers: false)
         setupMenuBar()
     }
 
-    private func loadTrackpadControlEnabled() {
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: Self.trackpadControlEnabledDefaultsKey) == nil {
-            defaults.set(false, forKey: Self.trackpadControlEnabledDefaultsKey)
-        }
-        trackpadControlEnabled = defaults.bool(forKey: Self.trackpadControlEnabledDefaultsKey)
+    /// Reload menu button labels when the connected remote adapter changes.
+    func noteActiveRemoteChanged() {
+        requestMenuRebuild()
     }
 
-    private func loadMappings() {
-        let savedSchema = UserDefaults.standard.integer(forKey: "buttonMappingsSchema")
-        let saved = UserDefaults.standard.dictionary(forKey: "buttonMappings") as? [String: String]
-        let result = ButtonMappingStore.migrate(saved: saved, savedSchema: savedSchema)
-        buttonMappings = result.mappings
-        for note in result.notes {
-            rmDebug("🎮 mapping: \(note)")
+    private func applyActiveProfile(notifyHandlers: Bool) {
+        let profile = profileStore.activeProfile
+        buttonMappings = profile.decodedMappings
+        for (button, action) in RemoteAdapterRegistry.activeAdapter.defaultMappings
+        where buttonMappings[button] == nil {
+            buttonMappings[button] = action
         }
-        UserDefaults.standard.set(result.schema, forKey: "buttonMappingsSchema")
-        saveMappings()
+        trackpadControlEnabled = profile.trackpadControlEnabled
+        scrollSpeed = profile.decodedScrollSpeed
+        guard notifyHandlers else { return }
+        onTrackpadControlToggle?(trackpadControlEnabled)
+        onScrollSpeedChange?(scrollSpeed)
+    }
+
+    private func persistActiveMappings() {
+        profileStore.updateActive(mappings: buttonMappings)
     }
 
     func resetMappingsToDefaults() {
-        buttonMappings = ButtonMappingStore.resetToDefaults()
-        UserDefaults.standard.set(ButtonMappingStore.currentSchema, forKey: "buttonMappingsSchema")
-        saveMappings()
+        let profile = profileStore.resetActiveMappingsToAdapterDefaults()
+        buttonMappings = profile.decodedMappings
         requestMenuRebuild()
-    }
-    
-    private func saveMappings() {
-        var toSave: [String: String] = [:]
-        for (button, action) in buttonMappings {
-            toSave[button] = action.rawValue
-        }
-        UserDefaults.standard.set(toSave, forKey: "buttonMappings")
     }
     
     /// Draw a compact waveform matching the global dictation HUD.
@@ -806,63 +788,8 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         polishItem.submenu = polishMenu
         menu.addItem(polishItem)
 
-        // Button Mappings submenu
-        let mappingsItem = NSMenuItem(title: "按键映射", action: nil, keyEquivalent: "")
-        let mappingsSubmenu = NSMenu()
-        
-        for (key, label) in ButtonMappingStore.menuButtons {
-            let buttonItem = NSMenuItem(title: label, action: nil, keyEquivalent: "")
-            let actionSubmenu = NSMenu()
-            let canHold = holdCapableButtons.contains(key)
-            var available: [ButtonAction] = []
-
-            for action in ButtonAction.allCases {
-                // Hold actions require press+release tracking; hide them on tap-only buttons.
-                // Backspace also works as a single tap, so it stays available everywhere.
-                if action.requiresHold && action != .backspace && !canHold { continue }
-                // Bulk-delete shortcuts are intended specifically for the Back button.
-                if (action == .optionBackspace || action == .commandBackspace), key != "menu" {
-                    continue
-                }
-                // Mouse Click is only meaningful for the trackpad click button.
-                if action == .trackpadClick && key != "select" { continue }
-                // Siri Remote push-to-talk is handled by the mic pipeline.
-                if action.isVoiceDictationKey { continue }
-                // Native media actions only appear on their matching physical button.
-                if action.isSystemMediaKey, action != ButtonAction.nativeMediaAction(forButton: key) {
-                    continue
-                }
-
-                available.append(action)
-            }
-
-            addStickyChoices(
-                to: actionSubmenu,
-                options: available,
-                title: { $0.displayName },
-                isOn: { [weak self] action in self?.buttonMappings[key] == action },
-                onSelect: { [weak self] action in
-                    guard let self else { return }
-                    self.buttonMappings[key] = action
-                    self.saveMappings()
-                }
-            )
-
-            buttonItem.submenu = actionSubmenu
-            mappingsSubmenu.addItem(buttonItem)
-        }
-
-        mappingsSubmenu.addItem(NSMenuItem.separator())
-        let resetMappings = NSMenuItem(
-            title: "恢复默认按键映射",
-            action: #selector(resetDefaultMappings(_:)),
-            keyEquivalent: ""
-        )
-        resetMappings.target = self
-        mappingsSubmenu.addItem(resetMappings)
-        
-        mappingsItem.submenu = mappingsSubmenu
-        menu.addItem(mappingsItem)
+        addProfileMenu()
+        addMappingsMenu()
 
         var trackpadView: StickyMenuItemView?
         let trackpadControlItem = stickyItem(title: "触控板鼠标", isOn: trackpadControlEnabled) { [weak self] in
@@ -940,10 +867,235 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         HelperInstallCoordinator.shared.uninstall()
     }
 
+    private func addProfileMenu() {
+        let active = profileStore.activeProfile
+        let profileItem = NSMenuItem(
+            title: "配置档：\(active.name)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        let profileMenu = NSMenu()
+        addStickyChoices(
+            to: profileMenu,
+            options: profileStore.profiles,
+            title: { $0.name },
+            isOn: { [weak self] profile in self?.profileStore.activeProfileID == profile.id },
+            onSelect: { [weak self] profile in
+                self?.selectProfile(id: profile.id)
+            }
+        )
+        profileMenu.addItem(NSMenuItem.separator())
+
+        let actions: [(String, Selector)] = [
+            ("新建…", #selector(createProfileMenu(_:))),
+            ("重命名…", #selector(renameProfileMenu(_:))),
+            ("复制", #selector(duplicateProfileMenu(_:))),
+            ("删除…", #selector(deleteProfileMenu(_:))),
+            ("导入…", #selector(importProfileMenu(_:))),
+            ("导出当前…", #selector(exportActiveProfileMenu(_:))),
+            ("导出全部…", #selector(exportCatalogMenu(_:))),
+        ]
+        for (title, selector) in actions {
+            let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+            item.target = self
+            profileMenu.addItem(item)
+        }
+        profileItem.submenu = profileMenu
+        menu.addItem(profileItem)
+    }
+
+    private func addMappingsMenu() {
+        let adapter = RemoteAdapterRegistry.activeAdapter
+        let mappingsItem = NSMenuItem(title: "按键映射", action: nil, keyEquivalent: "")
+        let mappingsSubmenu = NSMenu()
+
+        for (key, label) in adapter.menuButtons {
+            let buttonItem = NSMenuItem(title: label, action: nil, keyEquivalent: "")
+            let actionSubmenu = NSMenu()
+            let canHold = adapter.holdCapableButtons.contains(key)
+            var available: [ButtonAction] = []
+
+            for action in ButtonAction.allCases {
+                if action.requiresHold && action != .backspace && !canHold { continue }
+                if (action == .optionBackspace || action == .commandBackspace), key != "menu" {
+                    continue
+                }
+                if action == .trackpadClick && key != "select" { continue }
+                if action.isVoiceDictationKey { continue }
+                if action.isSystemMediaKey, action != ButtonAction.nativeMediaAction(forButton: key) {
+                    continue
+                }
+                available.append(action)
+            }
+
+            addStickyChoices(
+                to: actionSubmenu,
+                options: available,
+                title: { $0.displayName },
+                isOn: { [weak self] action in self?.buttonMappings[key] == action },
+                onSelect: { [weak self] action in
+                    guard let self else { return }
+                    self.buttonMappings[key] = action
+                    self.persistActiveMappings()
+                }
+            )
+
+            buttonItem.submenu = actionSubmenu
+            mappingsSubmenu.addItem(buttonItem)
+        }
+
+        mappingsSubmenu.addItem(NSMenuItem.separator())
+        let resetMappings = NSMenuItem(
+            title: "恢复默认按键映射",
+            action: #selector(resetDefaultMappings(_:)),
+            keyEquivalent: ""
+        )
+        resetMappings.target = self
+        mappingsSubmenu.addItem(resetMappings)
+
+        mappingsItem.submenu = mappingsSubmenu
+        menu.addItem(mappingsItem)
+    }
+
+    private func selectProfile(id: UUID) {
+        do {
+            _ = try profileStore.select(id: id)
+            applyActiveProfile(notifyHandlers: true)
+            requestMenuRebuild()
+        } catch {
+            presentProfileError(error)
+        }
+    }
+
+    @objc private func createProfileMenu(_ sender: NSMenuItem) {
+        guard let name = promptProfileName(
+            title: "新建配置档",
+            informative: "以当前按键映射、触控板与滚动设置为起点。",
+            defaultName: "新配置档"
+        ) else { return }
+        do {
+            _ = try profileStore.create(name: name, fromCurrent: true)
+            applyActiveProfile(notifyHandlers: true)
+            requestMenuRebuild()
+        } catch {
+            presentProfileError(error)
+        }
+    }
+
+    @objc private func renameProfileMenu(_ sender: NSMenuItem) {
+        let current = profileStore.activeProfile
+        guard let name = promptProfileName(
+            title: "重命名配置档",
+            informative: "当前：\(current.name)",
+            defaultName: current.name
+        ) else { return }
+        do {
+            _ = try profileStore.rename(id: current.id, to: name)
+            requestMenuRebuild()
+        } catch {
+            presentProfileError(error)
+        }
+    }
+
+    @objc private func duplicateProfileMenu(_ sender: NSMenuItem) {
+        do {
+            _ = try profileStore.duplicate(id: profileStore.activeProfileID)
+            applyActiveProfile(notifyHandlers: true)
+            requestMenuRebuild()
+        } catch {
+            presentProfileError(error)
+        }
+    }
+
+    @objc private func deleteProfileMenu(_ sender: NSMenuItem) {
+        let current = profileStore.activeProfile
+        let alert = NSAlert.hyperVibeAlert()
+        alert.messageText = "删除配置档？"
+        alert.informativeText = "将删除「\(current.name)」。此操作不可撤销。"
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        guard alert.runHyperVibeModal() == .alertFirstButtonReturn else { return }
+        do {
+            try profileStore.delete(id: current.id)
+            applyActiveProfile(notifyHandlers: true)
+            requestMenuRebuild()
+        } catch {
+            presentProfileError(error)
+        }
+    }
+
+    @objc private func importProfileMenu(_ sender: NSMenuItem) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "导入配置档 JSON"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            let result = try profileStore.importJSON(data)
+            for note in result.notes {
+                rmDebug("🎮 profile import: \(note)")
+            }
+            applyActiveProfile(notifyHandlers: true)
+            requestMenuRebuild()
+        } catch {
+            presentProfileError(error)
+        }
+    }
+
+    @objc private func exportActiveProfileMenu(_ sender: NSMenuItem) {
+        exportProfileData(
+            filename: "\(profileStore.activeProfile.name).json",
+            data: { try profileStore.exportActiveJSON() }
+        )
+    }
+
+    @objc private func exportCatalogMenu(_ sender: NSMenuItem) {
+        exportProfileData(
+            filename: "HyperVibe-profiles.json",
+            data: { try profileStore.exportCatalogJSON() }
+        )
+    }
+
+    private func exportProfileData(filename: String, data: () throws -> Data) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = filename
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try data().write(to: url, options: .atomic)
+        } catch {
+            presentProfileError(error)
+        }
+    }
+
+    private func promptProfileName(title: String, informative: String, defaultName: String) -> String? {
+        let alert = NSAlert.hyperVibeAlert()
+        alert.messageText = title
+        alert.informativeText = informative
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.stringValue = defaultName
+        alert.accessoryView = field
+        alert.addButton(withTitle: "确定")
+        alert.addButton(withTitle: "取消")
+        guard alert.runHyperVibeModal() == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
+    }
+
+    private func presentProfileError(_ error: Error) {
+        let alert = NSAlert.hyperVibeAlert()
+        alert.messageText = "配置档操作失败"
+        alert.informativeText = error.localizedDescription
+        alert.runHyperVibeModal()
+    }
+
     @objc private func resetDefaultMappings(_ sender: NSMenuItem) {
         let alert = NSAlert.hyperVibeAlert()
         alert.messageText = "恢复默认按键映射？"
-        alert.informativeText = "将覆盖你当前的按键自定义。"
+        alert.informativeText = "将用当前遥控器型号的默认映射覆盖「\(profileStore.activeProfile.name)」的按键自定义。"
         alert.addButton(withTitle: "恢复")
         alert.addButton(withTitle: "取消")
         guard alert.runHyperVibeModal() == .alertFirstButtonReturn else { return }
@@ -952,7 +1104,7 @@ class MenuBarManager: NSObject, NSMenuDelegate {
 
     private func setTrackpadControl(_ enabled: Bool) {
         trackpadControlEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: Self.trackpadControlEnabledDefaultsKey)
+        profileStore.updateActive(trackpadControlEnabled: enabled)
         onTrackpadControlToggle?(enabled)
         requestMenuRebuild()
     }

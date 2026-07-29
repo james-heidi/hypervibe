@@ -127,7 +127,9 @@ class RemoteInputHandler {
         let usage = IOHIDElementGetUsage(element)
         let intValue = IOHIDValueGetIntegerValue(value)
 
-        let identified = identifyButton(page: usagePage, usage: usage)
+        let identified = RemoteAdapterRegistry.activeAdapter
+            .identifyButton(page: usagePage, usage: usage)?
+            .rawValue
         rmDebug(String(format: "🎮 HID event: page=0x%X usage=0x%X value=%d → %@",
                        usagePage, usage, intValue, identified ?? "<unmapped>"))
         guard let buttonName = identified else { return }
@@ -239,57 +241,11 @@ class RemoteInputHandler {
         }
     }
     
-    // MARK: - Button Identification
-    
-    private func identifyButton(page: UInt32, usage: UInt32) -> String? {
-        switch (page, usage) {
-        // Generic Desktop Page (0x01)
-        case (0x01, 0x86): return "menu"          // System Menu Main
-        case (0x01, 0x40): return "menu"          // Menu (alternative)
-        
-        // Consumer Page (0x0C)  
-        case (0x0C, 0x04): return "siri"          // Siri button (actual)
-        case (0x0C, 0x60): return "tv"            // TV button (actual)
-        case (0x0C, 0x80): return "select"        // Selection
-        case (0x0C, 0x41): return "select"        // Menu Select (alternative)
-        case (0x0C, 0x42): return "ringUp"        // Click-ring Up
-        case (0x0C, 0x43): return "ringDown"      // Click-ring Down
-        case (0x0C, 0x44): return "ringLeft"      // Click-ring Left
-        case (0x0C, 0x45): return "ringRight"     // Click-ring Right
-        case (0x0C, 0xCD): return "playPause"     // Play/Pause
-        case (0x0C, 0xE2): return "mute"          // Mute
-        case (0x0C, 0xE9): return "volumeUp"      // Volume Increment
-        case (0x0C, 0xEA): return "volumeDown"    // Volume Decrement
-        case (0x0C, 0xB5): return "nextTrack"     // Scan Next Track
-        case (0x0C, 0xB6): return "prevTrack"     // Scan Previous Track
-        case (0x0C, 0x223): return "tv"           // AC Home (TV button alternative)
-        case (0x0C, 0x224): return "back"         // AC Back
-        case (0x0C, 0x40): return "menu"          // Menu
-        case (0x0C, 0x30): return "power"         // Power
-        case (0x0C, 0x20): return "mute"          // Mute (some remotes)
-        
-        // Button Page (0x09)
-        case (0x09, 0x01): return "select"        // Button 1
-        
-        // Apple Vendor Page (0xFF00) - Siri button
-        case (0xFF00, 0x01): return "siri"        // Siri button
-        case (0xFF00, 0x02): return "siri"        // Siri button (alternative)
-        case (0xFF00, 0x03): return "siri"        // Siri button (alternative)
-        case (0xFF00, _): return "siri"           // Any Apple vendor usage = likely Siri
-        
-        // Telephony Page (0x0B) - sometimes used for Siri
-        case (0x0B, 0x21): return "siri"          // Flash
-        case (0x0B, 0x2F): return "siri"          // Phone Mute
-        
-        default: return nil
-        }
-    }
-    
     // MARK: - Action Execution
     
     private func executeAction(_ action: ButtonAction, button: String, pressed: Bool) {
         if action.requiresHold {
-            if holdCapableButtons.contains(button) {
+            if RemoteAdapterRegistry.activeAdapter.holdCapableButtons.contains(button) {
                 handleHoldAction(action, button: button, pressed: pressed)
             } else if action == .backspace, pressed {
                 // Press-only buttons (menu/tv/select) can't hold: fire a single tap instead.

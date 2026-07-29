@@ -54,5 +54,6 @@ open HyperVibe.app
 
 ## Conventions
 
-- 2nd-gen remote (A2540) click-ring/Mute not yet mapped in `identifyButton` — superset HID codes probably cover the rest.
+- Remote HID identity lives in `RemoteAdapter` / `RemoteAdapterRegistry` (not a switch inside `RemoteInputHandler`). Add model-specific usages on the concrete adapter.
+- User layouts are `MappingProfileStore` JSON profiles (mappings + trackpad + scroll), not live UserDefaults `buttonMappings` after migration.
 - Long-term direction: migrate primary input to Xbox Adaptive Joystick (public GameController.framework) — keep Siri Remote path best-effort.

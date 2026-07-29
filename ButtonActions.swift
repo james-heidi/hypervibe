@@ -89,9 +89,7 @@ enum ButtonAction: String, CaseIterable {
     }
 }
 
-/// HID buttons whose driver emits both press (value=1) and release (value=0).
-let holdCapableButtons: Set<String> = [
-    "playPause", "volumeUp", "volumeDown",
-    "ringUp", "ringDown", "ringLeft", "ringRight", "mute",
-    "siri",
-]
+/// Union of hold-capable logical buttons across known Siri Remote adapters.
+/// Profile sanitize uses this (device-agnostic); runtime hold gating uses
+/// `RemoteAdapterRegistry.activeAdapter.holdCapableButtons`.
+var holdCapableButtons: Set<String> { SiriRemoteLayout.holdCapableButtons }
