@@ -1,0 +1,42 @@
+schema: spec-driven
+
+context: |
+  HyperVibe: macOS menu-bar app (Swift, AppKit) turning a Siri Remote into an
+  input device for Claude Code; Siri button is push-to-talk speech-to-text.
+  Build: ./build.sh (single swiftc invocation, no Xcode/SPM app build); new
+  .swift files must be added to BOTH build.sh and Package.swift.
+  STT today: FluidAudio 0.15.5 Parakeet TDT v3 (CoreML int8) or OpenAI cloud,
+  one-shot decode after key release, then TranscriptPolisher pass.
+  Read AGENTS.md for fragile invariants before proposing changes.
+  No tests; verification is manual with a paired remote (/tmp/hypervibe.log).
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+# Example:
+#   context: |
+#     Tech stack: TypeScript, React, Node.js
+#     We use conventional commits
+#     Domain: e-commerce platform
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing

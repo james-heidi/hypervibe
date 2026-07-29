@@ -37,6 +37,10 @@ open HyperVibe.app
 | `OpenAITranscriptionEngine.swift` | WAV upload to OpenAI `/v1/audio/transcriptions` |
 | `ParakeetTranscriptionEngine.swift` | FluidAudio Parakeet with menu-triggered lazy model download |
 | `TranscriptionKeychain.swift` | OpenAI API key in Keychain |
+| `CorpusRecorder.swift` | Opt-in dictation corpus capture (raw+processed WAV+JSON) for offline STT eval |
+| `AudioFrontEnd.swift` | Pre-ASR audio conditioning (legacy peak-norm default; HPF+AGC experimental) — copy in tools/stt-eval must stay in sync |
+| `VocabularyStore.swift` | User-editable CTC vocabulary boosting terms (vocabulary.json) |
+| `tools/stt-eval/` | Non-shipping eval harness: Parakeet replay CLI + WER/latency scorer |
 | `HCICaptureBootstrap.swift` | Bundled PacketLogger lookup + shell quoting |
 | `MicCapturePipeline.swift` | Privileged PacketLogger HCI nhdr stream / offline replay |
 | `OpusVoiceDecoder.swift` | A2854 Opus → 48 kHz PCM |
@@ -51,6 +55,7 @@ open HyperVibe.app
 - **HID seize** on connect prevents macOS double-dispatch (Music launching, system funk sound). Don't remove.
 - **Stuck-key safety.** Push-to-talk holds must release on remote disconnect and self-heal on missed release events.
 - **Gesture trailing-space policy.** Slash commands that take an argument get a trailing space; standalone/picker commands don't. Gestures never send Enter.
+- **Polish correction is generation-guarded.** Raw transcript types immediately; the async polish correction (backspace+retype in `MenuBarManager.replaceDictationText`) must only fire when `pressGeneration` is unchanged, no hold is active, and the toggle is on — otherwise it can delete user-typed characters. Don't reorder typing back behind polish.
 
 ## Conventions
 

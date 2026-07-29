@@ -87,6 +87,7 @@ final class OpenAITranscriptionEngine: TranscriptionEngine {
         guard pcm.count >= 12_000 else {
             publish(.ready)
             rmDebug("🎤 OpenAI skip short clip samples=\(pcm.count)")
+            CorpusRecorder.shared.recordDropped(pcmS16: pcm, sampleRate: rate, engineID: id.rawValue)
             DispatchQueue.main.async { completion(.success(nil)) }
             return
         }
@@ -168,7 +169,11 @@ final class OpenAITranscriptionEngine: TranscriptionEngine {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("hypervibe-openai-\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: url) }
-        try PCMWaveWriter.write(samples: PCMWaveWriter.boostForASR(samples), sampleRate: sampleRate, to: url)
+        // Same front-end as the local engine so engine comparisons share input.
+        let frontEndMode = AudioFrontEndMode.current
+        let processed = AudioFrontEnd.process(samples, sampleRate: sampleRate, mode: frontEndMode)
+        try PCMWaveWriter.write(samples: processed, sampleRate: sampleRate, to: url)
+        let decodeStart = Date()
         let fileData = try Data(contentsOf: url)
         let boundary = "HyperVibeBoundary\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
         let model = TranscriptionEngineID.openAIModel
@@ -219,6 +224,15 @@ final class OpenAITranscriptionEngine: TranscriptionEngine {
             throw TranscriptionEngineError.network("OpenAI \(http.statusCode): \(message.prefix(240))")
         }
         let text = try Self.parseTranscriptJSON(responseData)
+        CorpusRecorder.shared.record(
+            pcmS16: processed,
+            rawPCM: samples,
+            sampleRate: sampleRate,
+            engineID: id.rawValue,
+            decodeMs: Int(Date().timeIntervalSince(decodeStart) * 1000),
+            rawTranscript: text,
+            frontEndMode: frontEndMode.rawValue
+        )
         return text.isEmpty ? nil : text
     }
 
