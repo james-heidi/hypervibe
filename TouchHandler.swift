@@ -45,7 +45,7 @@ class TouchHandler {
     private var reconnectTimer: Timer?
     private var fastReconnectTimer: Timer?
     private var wakeObserver: NSObjectProtocol?
-    private var trackpadControlEnabled = true
+    private var trackpadControlEnabled = false
     
     var scrollScale: CGFloat = 150.0
     

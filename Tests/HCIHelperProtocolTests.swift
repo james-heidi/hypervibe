@@ -43,6 +43,12 @@ struct HCIHelperProtocolTests {
         let stopLine = HCIHelperCodec.encode(.stop)
         expect(HCIHelperCodec.decodeRequest(stopLine) == .stop, "stop round-trips")
         expect(HCIHelperCodec.decodeRequest(HCIHelperCodec.encode(.ping)) == .ping, "ping round-trips")
+        expect(HCIHelperCodec.decodeRequest(HCIHelperCodec.encode(.version)) == .version, "version round-trips")
+        let version = HCIHelperCodec.encodeResponse(.version(HCIHelperCodec.currentHelperVersion))
+        expect(
+            HCIHelperCodec.decodeResponse(version) == .version(HCIHelperCodec.currentHelperVersion),
+            "version response round-trips"
+        )
 
         let ok = HCIHelperCodec.encodeResponse(.ok)
         expect(HCIHelperCodec.decodeResponse(ok) == .ok, "ok response round-trips")

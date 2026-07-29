@@ -43,9 +43,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarManager = MenuBarManager(statusItem: statusItem)
         menuBarManager.mediaController = MediaController()
         
-        // Check accessibility permissions
-        checkAccessibilityPermissions()
-        
         // Initialize controllers
         let cursorController = CursorController()
 
@@ -87,11 +84,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         // disable so handleSiri returns false and Siri presses
                         // fall through to HID mapping instead of being consumed.
                         mic.setEnabled(false)
-                        self.menuBarManager.remoteMicEnabled = false
                         return
                     }
                     mic.setEnabled(true)
-                    self.menuBarManager.remoteMicEnabled = true
                     mic.attachSeizedDevices(self.remoteInputHandler?.seizedDevices ?? [])
                     mic.startIdleCaptureIfEnabled()
                 }
@@ -101,10 +96,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarManager.onTranscriptionEngineChange = { [weak mic] id in
             mic?.setEngine(id)
         }
-        menuBarManager.onOpenAIKeySave = { [weak mic] key in
+        menuBarManager.onOpenAIKeySave = { [weak self, weak mic] key in
             do {
                 try TranscriptionKeychain.saveOpenAIKey(key)
                 mic?.prepareSelectedEngine(completion: nil)
+                if let mic {
+                    self?.menuBarManager.updatePolishStatus(
+                        mode: mic.polishMode,
+                        localSummary: mic.polishLocalSummary,
+                        cloudSummary: mic.polishCloudSummary
+                    )
+                }
             } catch {
                 let alert = NSAlert.hyperVibeAlert()
                 alert.messageText = "无法保存 OpenAI Key"
@@ -119,17 +121,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarManager.onParakeetDownloadCancel = { [weak mic] in
             mic?.cancelParakeetDownload()
         }
+        menuBarManager.onPolishModeChange = { [weak mic, weak menuBarManager] mode in
+            mic?.polishMode = mode
+            if let mic {
+                menuBarManager?.updatePolishStatus(
+                    mode: mode,
+                    localSummary: mic.polishLocalSummary,
+                    cloudSummary: mic.polishCloudSummary
+                )
+            }
+        }
         // Off until ensureDictation confirms lab readiness (async, below).
-        menuBarManager.remoteMicEnabled = false
         menuBarManager.selectedTranscriptionEngine = mic.engineID
         menuBarManager.transcriptionEngineStatus = mic.engineState
-        mic.onStatus = { [weak self] status, deviceName in
-            self?.menuBarManager.updateRemoteMicStatus(
-                enabled: self?.remoteMicController?.enabled ?? false,
-                statusText: self?.remoteMicController?.statusText ?? status.menuLabel,
-                sinkName: deviceName
-            )
-        }
+        menuBarManager.updatePolishStatus(
+            mode: mic.polishMode,
+            localSummary: mic.polishLocalSummary,
+            cloudSummary: mic.polishCloudSummary
+        )
+        mic.prewarmPolish()
         mic.onReadinessState = { [weak menuBarManager] state in
             menuBarManager?.updateMicReadiness(state)
         }
@@ -141,6 +151,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         mic.onTranscribedText = { [weak menuBarManager] text in
             menuBarManager?.typeDictationText(text)
+        }
+        menuBarManager.onRecoveryAction = { [weak mic] in
+            mic?.performRecovery()
+        }
+        menuBarManager.onOpenSetupWizard = { [weak self] in
+            self?.presentOnboarding()
+        }
+        HelperInstallCoordinator.shared.addOnChange(id: "app") { [weak self] in
+            SetupCoordinator.shared.refresh(reason: .helper)
+            self?.menuBarManager.requestMenuRebuild()
+            // Warm capture when the daemon answers — not on every UI tick.
+            if HelperInstallCoordinator.shared.readiness.isUsableForCapture {
+                self?.menuBarManager.onEnsureDictationEnabled?()
+            }
+        }
+        SetupCoordinator.shared.onInputMonitoringGranted = { [weak self] in
+            self?.restartMediaKeyInterceptor()
         }
         inputHandler.onSiriMic = { [weak mic] pressed in
             mic?.handleSiri(pressed: pressed) ?? false
@@ -178,20 +205,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             mic?.ensureCaptureWarm()
         }
         
-        // Request Input Monitoring so media key tap works in both CLI and .app
-        if #available(macOS 10.15, *) {
-            if !CGPreflightListenEventAccess() {
-                CGRequestListenEventAccess()
-            }
-        }
-        
-        // Start media key interceptor
+        // Start media key interceptor (Input Monitoring may still be missing —
+        // onboarding / 安装 menu will request it and restart the tap).
         mediaKeyInterceptor = MediaKeyInterceptor()
         mediaKeyInterceptor?.onMediaKey = { [weak self] keyType in
             guard let self = self else { return false }
             return self.handleInterceptedMediaKey(keyType)
         }
         mediaKeyInterceptor?.start()
+
+        ModelDownloadMirror.applyToRegistry()
+        HelperInstallCoordinator.shared.refresh(reason: "launch")
+        // Keychain reads can stall behind a SecurityAgent prompt — resolve the
+        // OpenAI key off-main and repaint once known.
+        TranscriptionKeychain.refreshOpenAIKeyPresence { [weak self] changed in
+            guard changed, let self, let mic = self.remoteMicController else { return }
+            self.menuBarManager.updatePolishStatus(
+                mode: mic.polishMode,
+                localSummary: mic.polishLocalSummary,
+                cloudSummary: mic.polishCloudSummary
+            )
+        }
+
+        // Present onboarding after the status item and pipelines are wired.
+        DispatchQueue.main.async { [weak self] in
+            SetupCoordinator.shared.refresh(reason: .launch)
+            if SetupCoordinator.shouldPresentOnLaunch() {
+                self?.presentOnboarding()
+            }
+        }
+    }
+
+    private var onboardingController: OnboardingWindowController?
+
+    private func presentOnboarding() {
+        if onboardingController == nil {
+            onboardingController = OnboardingWindowController()
+        }
+        onboardingController?.present()
+    }
+
+    private func restartMediaKeyInterceptor() {
+        mediaKeyInterceptor?.stop()
+        mediaKeyInterceptor?.start()
+        if !HyperVibePermission.inputMonitoring.isGranted {
+            return
+        }
+        // If the tap still won't arm, ask for a relaunch.
+        // MediaKeyInterceptor logs failure; a second start after grant usually works.
     }
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -212,6 +273,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             micWakeObserver = nil
         }
+        remoteMicController?.clearRecovery()
         remoteMicController?.shutdown()
         remoteInputHandler?.releaseAllHeldKeys()
         touchHandler?.stop()
@@ -281,15 +343,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Always consume remapped media keys — default macOS handler must not fire.
         return true
-    }
-    
-    // MARK: - Permissions
-    
-    private func checkAccessibilityPermissions() {
-        // macOS will show its own prompt when needed
-        // No need for redundant custom alert
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
     }
 }
 

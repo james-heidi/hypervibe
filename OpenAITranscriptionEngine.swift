@@ -23,23 +23,36 @@ final class OpenAITranscriptionEngine: TranscriptionEngine {
     /// Injectable for tests.
     var transport: ((URLRequest, Data) throws -> (HTTPURLResponse, Data))?
 
+    /// Injectable so tests never touch the real Keychain: a `SecItemCopyMatching`
+    /// on an item whose ACL predates the current binary blocks until the user
+    /// answers a SecurityAgent prompt.
+    var keyProvider: () -> String? = { TranscriptionKeychain.loadOpenAIKey() }
+
     init(session: URLSession = .shared) {
         self.session = session
     }
 
+    /// `keyProvider` may hit the Keychain, which can block behind a SecurityAgent
+    /// prompt — resolve off the caller's thread so a main-thread prepare can't hang.
     func prepare(completion: ((Bool) -> Void)?) {
-        if TranscriptionKeychain.hasOpenAIKey {
-            publish(.ready)
-            completion?(true)
-        } else {
-            publish(.needsSetup("需设置 OpenAI Key"))
-            completion?(false)
+        let provider = keyProvider
+        TranscriptionKeychain.keychainQueue.async { [weak self] in
+            guard let self else { return }
+            let hasKey = provider() != nil
+            DispatchQueue.main.async {
+                if hasKey {
+                    self.publish(.ready)
+                } else {
+                    self.publish(.needsSetup("需设置 OpenAI Key"))
+                }
+                completion?(hasKey)
+            }
         }
     }
 
     @discardableResult
     func startUtterance() -> Bool {
-        guard TranscriptionKeychain.hasOpenAIKey else {
+        guard keyProvider() != nil else {
             publish(.needsSetup("需设置 OpenAI Key"))
             return false
         }
@@ -149,7 +162,7 @@ final class OpenAITranscriptionEngine: TranscriptionEngine {
 
     private func transcribe(samples: [Int16], sampleRate: Int, opID: UUID) throws -> String? {
         guard generation == opID else { return nil }
-        guard let apiKey = TranscriptionKeychain.loadOpenAIKey() else {
+        guard let apiKey = keyProvider() else {
             throw TranscriptionEngineError.missingAPIKey
         }
         let url = FileManager.default.temporaryDirectory

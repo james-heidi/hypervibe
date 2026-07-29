@@ -59,6 +59,7 @@ enum TranscriptionEngineState: Equatable {
     case idle
     case needsSetup(String)
     case downloading(Double)
+    case preparing(ModelPrepProgress)
     case ready
     case listening
     case recognizing
@@ -69,10 +70,18 @@ enum TranscriptionEngineState: Equatable {
         case .idle: return "未就绪"
         case .needsSetup(let reason): return reason
         case .downloading(let p): return String(format: "下载中 %.0f%%", p * 100)
+        case .preparing(let prep): return prep.menuLabel
         case .ready: return "听写就绪"
         case .listening: return "正在听写"
         case .recognizing: return "识别中"
         case .unavailable(let reason): return reason
+        }
+    }
+
+    var isDownloading: Bool {
+        switch self {
+        case .downloading, .preparing: return true
+        default: return false
         }
     }
 }

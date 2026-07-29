@@ -34,6 +34,12 @@ cp "HyperVibeHCIHelper" "${APP_BUNDLE}/Contents/Resources/Helpers/com.hypervibe.
 chmod 755 "${APP_BUNDLE}/Contents/Resources/Helpers/com.hypervibe.hcihelper"
 echo "Bundled HCI helper"
 
+# Generate / refresh the wave app icon before packaging.
+if [[ ! -f HyperVibe.icns ]] || [[ WaveGlyph.swift -nt HyperVibe.icns ]] || [[ gen_icon.swift -nt HyperVibe.icns ]]; then
+    echo "Generating HyperVibe.icns…"
+    ./scripts/make_icon.sh
+fi
+
 # Copy icon if it exists
 if [ -f "HyperVibe.icns" ]; then
     cp "HyperVibe.icns" "${APP_BUNDLE}/Contents/Resources/HyperVibe.icns"

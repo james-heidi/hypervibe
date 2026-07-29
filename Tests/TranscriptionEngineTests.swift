@@ -72,11 +72,15 @@ struct TranscriptionEngineTests {
             return (response, #"{"text":"fixture ok"}"#.data(using: .utf8)!)
         }
 
-        // Without a key, start must fail closed.
-        let hadKey = TranscriptionKeychain.hasOpenAIKey
-        if !hadKey {
-            expect(engine.startUtterance() == false, "OpenAI start requires key")
-        }
+        // Without a key, start must fail closed. The provider is injected so the
+        // test never reads the real Keychain — that call can block indefinitely
+        // behind a SecurityAgent prompt when the item's ACL predates this binary.
+        engine.keyProvider = { nil }
+        expect(engine.startUtterance() == false, "OpenAI start requires key")
+        expect(engine.state == .needsSetup("需设置 OpenAI Key"), "missing key surfaces setup state")
+
+        engine.keyProvider = { "sk-test" }
+        expect(engine.startUtterance(), "OpenAI start succeeds once a key exists")
     }
 
     private static func testParakeetNeedsDownloadState() {

@@ -26,6 +26,9 @@ final class HCIHelperServer {
     private var hadPrefsBackup = false
     private var parentWatchTimer: DispatchSourceTimer?
     private var tokenWatchPath: String?
+    /// Snapshot so PING/STATUS never wait behind a long STOP/START on `queue`.
+    private let stateLock = NSLock()
+    private var captureRunningSnapshot = false
 
     init(socketPath: String) {
         self.socketPath = socketPath
@@ -105,15 +108,37 @@ final class HCIHelperServer {
             return
         }
 
+        // Answer liveness probes without taking the capture serial queue — a
+        // concurrent STOP can hold that queue for seconds and would otherwise
+        // make a healthy helper look dead to the app.
+        switch request {
+        case .ping:
+            writeAll(HCIHelperCodec.encodeResponse(.pong), to: fd)
+            return
+        case .version:
+            writeAll(
+                HCIHelperCodec.encodeResponse(.version(HCIHelperCodec.currentHelperVersion)),
+                to: fd
+            )
+            return
+        case .status:
+            stateLock.lock()
+            let running = captureRunningSnapshot
+            stateLock.unlock()
+            writeAll(
+                HCIHelperCodec.encodeResponse(.status(running ? "running" : "idle")),
+                to: fd
+            )
+            return
+        case .stop, .start:
+            break
+        }
+
         let response: HCIHelperResponse = queue.sync {
             switch request {
-            case .ping:
+            case .ping, .status, .version:
+                // Handled above; keep exhaustive.
                 return .pong
-            case .status:
-                if captureProcess?.isRunning == true {
-                    return .status("running")
-                }
-                return .status("idle")
             case .stop:
                 stopCaptureLocked()
                 return .ok
@@ -276,6 +301,9 @@ final class HCIHelperServer {
             proc.standardError = outHandle
             try proc.run()
             captureProcess = proc
+            stateLock.lock()
+            captureRunningSnapshot = true
+            stateLock.unlock()
             capturePID = proc.processIdentifier
             tokenWatchPath = tokenURL.path
 
@@ -360,6 +388,9 @@ final class HCIHelperServer {
         }
         captureProcess = nil
         capturePID = 0
+        stateLock.lock()
+        captureRunningSnapshot = false
+        stateLock.unlock()
 
         restorePrefsLocked()
 

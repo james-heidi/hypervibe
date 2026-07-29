@@ -25,24 +25,29 @@ Each physical Siri Remote button is independently assignable via the menu bar.
 <img src="screenshot-button-mapping.png" alt="Button Mappings menu screenshot" width="70%">
 
 **Default Button Mapping (Customizable):**
-- Menu → Esc
+- Play/Pause → Esc
+- Menu (返回) → Command + Backspace
+- Trackpad click → Enter
+- Direction ring → Arrow keys
+- Volume Up / Down → System volume
+- Mute → System mute
 - TV → Ctrl + C
-- Siri → Space (Claude voice dictation)
-- Play/Pause → Enter
-- Volume Up → Up arrow
-- Volume Down → Down arrow
+- Siri → Hold for remote dictation (not remapped)
 
 | Action | Behavior |
 |---|---|
-| Play/pause button | Enter (submit prompt) |
-| Volume up button | Up arrow |
-| Volume down button | Down arrow |
-| Menu button | Esc (Navigate back) |
-| TV button | Control + C (cancel prompt) |
-| Trackpad click | Left mouse click |
-| Siri/mic button | Space on hold (Claude voice dictation must be enabled) |
+| Play/pause button | Esc |
+| Menu button | Command + Backspace (delete line) |
+| Trackpad click | Enter (submit prompt) |
+| Direction ring | Arrow keys |
+| Volume up / down | System volume |
+| Mute | System mute |
+| TV button | Recover last dictation |
+| Siri/mic button | Hold to dictate via OpenAI / Parakeet |
 
 **Hold-Capable Buttons:** Push-to-talk actions require buttons that emit both press and release HID events. Only Play/Pause, Volume Up, Volume Down, and Siri buttons allow for both events. Also this button can trigger right command or option key for other dictation apps like [VoiceInk](https://github.com/Beingpax/VoiceInk).
+
+**Recover last dictation:** Press the TV button by default, or map another button to “恢复上次语音”. Retypes the last polished text when available; otherwise resumes interrupted audio (~30s in memory, cleared on quit).
 
 
 ### Trackpad Inputs
@@ -83,17 +88,17 @@ This runs a single `swiftc` invocation over all the project's Swift files, linki
 ## Installing and Running
 
 1. Build and bundle: `./build.sh && ./create_app_bundle.sh`
-2. Move `HyperVibe.app` to `/Applications` (optional but helps icon caching)
-3. Launch it (`open HyperVibe.app`)
-4. Grant permissions in **System Settings → Privacy & Security**:
-   - **Accessibility** (for posting keyboard/mouse events)
-   - **Input Monitoring** (for reading HID events)
-   - **Bluetooth** (to communicate with the remote)
+2. Move `HyperVibe.app` to `/Applications` (recommended so TCC grants stick across rebuilds; prefer signing with **HyperViabe Dev**)
+3. Launch it (`open /Applications/HyperVibe.app`)
+4. Complete the **3-step install wizard** (or menu bar → **安装**):
+   - **Accessibility** — post keyboard/mouse events
+   - **Input Monitoring** — read HID / media-key events
+   - **Voice helper** — privileged HCI capture component (admin password once)
 5. Pair the Siri Remote via **System Settings → Bluetooth** if it isn't already paired
-6. Use the menu-bar icon to access Button Mappings and dictation settings
-7. **Internal remote dictation prototype:** build packaging copies `/Applications/PacketLogger.app` into HyperVibe. Pick an engine (OpenAI / Parakeet), approve the administrator prompt, then hold Siri to speak and release to type into the focused app. Parakeet models download only when selected. BlackHole, Bluetooth logging profiles, and sudoers edits are not required. See [docs/remote-mic.md](docs/remote-mic.md).
+6. Use the menu-bar icon for Button Mappings, dictation engine, and the optional Hugging Face mirror
+7. **Internal remote dictation:** build packaging copies `/Applications/PacketLogger.app` into HyperVibe. Pick an engine (OpenAI / Parakeet), then hold Siri to speak and release to type into the focused app. Parakeet download shows real phase progress (bytes → compile → ready) and can pause/resume; mirrors are opt-in only. See [docs/remote-mic.md](docs/remote-mic.md).
 
-> ⚠️ **Important:** You must explicitly add **HyperVibe.app** to **System Settings → Privacy & Security → Input Monitoring** (click the **+** button and select the app). Without this, HyperVibe may not properly intercept HID events/media keys, which means vol up and down buttons and play/pause buttons will trigger volume change and triggering of Apple Music.
+> ⚠️ **Important:** Prefer launching the signed app from `/Applications/HyperVibe.app`. Re-signing with a different identity invalidates Accessibility / Input Monitoring grants and looks like “dictation finished but no text typed.”
 
 A diagnostic log is written to `/tmp/hypervibe.log` (NSLog is redacted under hardened runtime, so HyperVibe uses file-based logging).
 
