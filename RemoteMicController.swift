@@ -144,11 +144,18 @@ final class RemoteMicController {
         utteranceReceivedFrame = true
         captureWasColdAtPress = false
         utteranceBeganAt = Date()
+        lastRearmStatus = nil
         publishReadiness(.listening)
         queue.async {
             self.acceptingAudio = true
             self.wavSamples = pending.samples
         }
+        // Finishing the previous utterance disarmed PushToTalk, and a capture that
+        // is already warm emits no new status, so `onStatus` will not re-arm either.
+        // Without this the continuation window below records silence and only the
+        // buffered PCM reaches the engine.
+        pressGeneration = UUID()
+        activator.rearmOnSiriDown()
         // Time-boxed continuation: auto-finish after 15s unless Siri is pressed.
         let finish = DispatchWorkItem { [weak self] in
             guard let self, self.siriHeld else { return }
@@ -156,7 +163,8 @@ final class RemoteMicController {
             _ = self.handleSiri(pressed: false)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: finish)
-        // A physical Siri press during resume will take over via handleSiri.
+        // Resume already counts as held, so a physical Siri press is swallowed by
+        // `handleSiri`; its release is what closes the utterance early.
         rmDebug("🎤 recovery resume samples=\(pending.samples.count)")
     }
 
