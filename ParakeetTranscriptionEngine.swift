@@ -6,6 +6,7 @@
 //  selects this engine — never during DMG packaging.
 //
 
+import AVFAudio
 import Foundation
 import FluidAudio
 
@@ -18,6 +19,7 @@ final class ParakeetTranscriptionEngine: TranscriptionEngine {
     private let queue = DispatchQueue(label: "com.hypervibe.parakeet-transcription")
     private let modelVersion: AsrModelVersion = .v3
 
+    /// Mirrored by tools/stt-eval/ParakeetEvalCLI (keep configs in sync).
     /// Accuracy-tuned config for the v3 multilingual model (per FluidAudio guidance):
     /// `melChunkContext=false` avoids the English-biased decoder drift the 80ms prepend
     /// causes on multilingual audio, and `dualDecodeArbitration=true` probes the opening
@@ -45,7 +47,128 @@ final class ParakeetTranscriptionEngine: TranscriptionEngine {
         return AsrModels.modelsExist(at: dir, version: .v3)
     }
 
+    // MARK: - Vocabulary boosting (CTC keyword spotting, opt-in)
+
+    private var ctcSpotter: CtcKeywordSpotter?
+    private var vocabRescorer: VocabularyRescorer?
+    private var vocabContext: CustomVocabularyContext?
+    /// Rebuild the rescorer only when the user's term list actually changed.
+    private var vocabFingerprint: String?
+
+    static var ctcModelsCached: Bool {
+        CtcModels.modelsExist(at: CtcModels.defaultCacheDirectory())
+    }
+
+    /// One-time CTC model fetch (menu-triggered, like the main model).
+    func startCtcModelDownload(completion: ((Bool) -> Void)? = nil) {
+        publish(.preparing(ModelPrepProgress(
+            phase: .listing, fraction: 0.05, bytesPerSecond: nil, etaSeconds: nil)))
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await CtcModels.downloadAndLoad()
+                self.prewarmVocabularyBoost()
+                self.publish(Self.modelsCached ? .ready : .needsSetup("需下载模型"))
+                DispatchQueue.main.async { completion?(true) }
+            } catch {
+                rmDebug("📖 CTC model download failed: \(error.localizedDescription)")
+                self.publish(Self.modelsCached ? .ready : .needsSetup("需下载模型"))
+                DispatchQueue.main.async { completion?(false) }
+            }
+        }
+    }
+
+    /// Load/refresh the CTC spotter + rescorer. First load compiles CoreML
+    /// (seconds) — call from prewarm, never let dictation wait more than the
+    /// per-utterance budget for it.
+    private func ensureVocabStackLoaded() async throws {
+        guard !VocabularyStore.shared.terms().isEmpty else { return }
+        let fingerprint = VocabularyStore.shared.fingerprint
+        if vocabRescorer != nil && vocabFingerprint == fingerprint { return }
+        // loadWithCtcTokens tokenizes each term for the CTC head —
+        // terms without ctcTokenIds are never spotted.
+        let (context, models) = try await CustomVocabularyContext.loadWithCtcTokens(
+            from: VocabularyStore.fileURL.path)
+        let spotter = CtcKeywordSpotter(models: models, blankId: models.vocabulary.count)
+        // spotterRescueEnabled=false: the acoustic rescue pass over-fires
+        // on our quiet remote audio ("Today"→"Parakeet"); alias/similarity
+        // replacement alone is precise (FluidAudio #724 control).
+        let rescorer = try await VocabularyRescorer.create(
+            spotter: spotter, vocabulary: context,
+            config: VocabularyRescorer.Config(spotterRescueEnabled: false))
+        queue.sync {
+            ctcSpotter = spotter
+            vocabContext = context
+            vocabRescorer = rescorer
+            vocabFingerprint = fingerprint
+        }
+    }
+
+    /// Warm the boost stack off the dictation path (toggle-on / app start).
+    func prewarmVocabularyBoost() {
+        guard VocabularyStore.shared.isEnabled, Self.ctcModelsCached else { return }
+        Task { [weak self] in
+            let start = Date()
+            do {
+                try await self?.ensureVocabStackLoaded()
+                rmDebug(String(format: "📖 vocabulary stack warm in %.1fs", Date().timeIntervalSince(start)))
+            } catch {
+                rmDebug("📖 vocabulary prewarm failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Boost `text` toward the user's vocabulary. Fails open: any error or
+    /// missing precondition returns the unboosted transcript. If the stack is
+    /// still cold (prewarm not finished), skip — never stall dictation.
+    private func applyVocabularyBoost(
+        text: String,
+        tokenTimings: [TokenTiming]?,
+        audio48k: [Int16]
+    ) async -> String {
+        guard VocabularyStore.shared.isEnabled, Self.ctcModelsCached,
+              let tokenTimings, !tokenTimings.isEmpty else { return text }
+        do {
+            if vocabRescorer == nil || vocabFingerprint != VocabularyStore.shared.fingerprint {
+                // Cold or stale: kick a background (re)load and type unboosted now.
+                prewarmVocabularyBoost()
+                rmDebug("📖 vocabulary stack cold — this utterance unboosted")
+                return text
+            }
+            guard let spotter = ctcSpotter, let rescorer = vocabRescorer,
+                  let context = vocabContext else { return text }
+
+            // 48 kHz Int16 → 16 kHz Float via FluidAudio's resampler.
+            let f = audio48k.map { Float($0) / 32768.0 }
+            let audio16k = try AudioConverter().resample(f, from: 48_000)
+            let spot = try await spotter.spotKeywordsWithLogProbs(
+                audioSamples: audio16k, customVocabulary: context, minScore: nil)
+            guard !spot.logProbs.isEmpty else { return text }
+            // Pass vocab-size tuned cbw and the file's minSimilarity — the
+            // rescorer does NOT read them from the context on its own.
+            let sizeConfig = ContextBiasingConstants.rescorerConfig(forVocabSize: context.terms.count)
+            let out = rescorer.ctcTokenRescore(
+                transcript: text,
+                tokenTimings: tokenTimings,
+                logProbs: spot.logProbs,
+                frameDuration: spot.frameDuration,
+                cbw: sizeConfig.cbw,
+                minSimilarity: max(sizeConfig.minSimilarity, context.minSimilarity))
+            if out.wasModified {
+                let applied = out.replacements.filter { $0.shouldReplace }
+                    .map { "\($0.originalWord)→\($0.replacementWord ?? "")" }
+                rmDebug("📖 vocabulary boost applied: \(applied.joined(separator: ", "))")
+                return out.text
+            }
+            return text
+        } catch {
+            rmDebug("📖 vocabulary boost failed (using unboosted): \(error.localizedDescription)")
+            return text
+        }
+    }
+
     func prepare(completion: ((Bool) -> Void)?) {
+        prewarmVocabularyBoost()
         if Self.modelsCached {
             ensureManagerLoaded { [weak self] ok in
                 if ok {
@@ -226,25 +349,34 @@ final class ParakeetTranscriptionEngine: TranscriptionEngine {
         guard pcm.count >= 12_000 else {
             publish(.ready)
             rmDebug("🎤 Parakeet skip short clip samples=\(pcm.count)")
+            CorpusRecorder.shared.recordDropped(pcmS16: pcm, sampleRate: rate, engineID: id.rawValue)
             DispatchQueue.main.async { completion(.success(nil)) }
             return
         }
 
-        let wav = FileManager.default.temporaryDirectory
-            .appendingPathComponent("hypervibe-parakeet-\(UUID().uuidString).wav")
-        do {
-            let boosted = PCMWaveWriter.boostForASR(pcm)
-            try PCMWaveWriter.write(samples: boosted, sampleRate: rate, to: wav)
-        } catch {
+        // In-memory decode: no temp-WAV round-trip. FluidAudio's buffer overload
+        // uses the same audioConverter as the URL path, so transcripts match.
+        let frontEndMode = AudioFrontEndMode.current
+        let boosted = AudioFrontEnd.process(pcm, sampleRate: rate, mode: frontEndMode)
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32, sampleRate: Double(rate), channels: 1, interleaved: false
+        ), let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(boosted.count)) else {
             publish(.ready)
-            DispatchQueue.main.async { completion(.failure(error)) }
+            DispatchQueue.main.async {
+                completion(.failure(TranscriptionEngineError.backend("audio buffer allocation failed")))
+            }
             return
+        }
+        buffer.frameLength = AVAudioFrameCount(boosted.count)
+        if let channel = buffer.floatChannelData?[0] {
+            for i in 0..<boosted.count {
+                channel[i] = Float(boosted[i]) / 32768.0
+            }
         }
 
         recognitionTask?.cancel()
         recognitionTask = Task { [weak self] in
             guard let self else { return }
-            defer { try? FileManager.default.removeItem(at: wav) }
             do {
                 try await self.ensureManagerLoadedAsync()
                 try Task.checkCancellation()
@@ -257,13 +389,28 @@ final class ParakeetTranscriptionEngine: TranscriptionEngine {
                     throw TranscriptionEngineError.backend("Parakeet manager unavailable")
                 }
                 var decoderState = try TdtDecoderState(decoderLayers: await manager.decoderLayerCount)
-                let result = try await manager.transcribe(wav, decoderState: &decoderState)
+                let decodeStart = Date()
+                let result = try await manager.transcribe(buffer, decoderState: &decoderState)
+                let decodeMs = Int(Date().timeIntervalSince(decodeStart) * 1000)
                 try Task.checkCancellation()
                 guard self.generation == opID else {
                     DispatchQueue.main.async { completion(.success(nil)) }
                     return
                 }
-                let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                var text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    text = await self.applyVocabularyBoost(
+                        text: text, tokenTimings: result.tokenTimings, audio48k: boosted)
+                }
+                CorpusRecorder.shared.record(
+                    pcmS16: boosted,
+                    rawPCM: pcm,
+                    sampleRate: rate,
+                    engineID: self.id.rawValue,
+                    decodeMs: decodeMs,
+                    rawTranscript: text,
+                    frontEndMode: frontEndMode.rawValue
+                )
                 self.publish(.ready)
                 rmDebug("🎤 Parakeet result samples=\(pcm.count) text=\(text.isEmpty ? "<empty>" : text)")
                 DispatchQueue.main.async {

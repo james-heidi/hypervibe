@@ -99,6 +99,10 @@ enum TranscriptPolishPrompt {
     static func sanitizeResult(_ polished: String, raw: String) -> String {
         let trimmed = polished.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return raw }
+        // Polish is a light edit: filler removal shrinks text, casing/punctuation
+        // barely grows it. Output much longer than the input means the model
+        // rambled or hallucinated a continuation — fail open to the raw text.
+        if trimmed.count > raw.count + max(16, raw.count / 4) { return raw }
         // Strip accidental wrapping quotes from overly obedient models.
         if trimmed.count >= 2,
            (trimmed.hasPrefix("\"") && trimmed.hasSuffix("\""))

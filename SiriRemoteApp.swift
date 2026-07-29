@@ -125,6 +125,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarManager.onParakeetDownloadCancel = { [weak mic] in
             mic?.cancelParakeetDownload()
         }
+        menuBarManager.onCtcModelDownload = { [weak mic] in
+            mic?.startCtcModelDownload()
+        }
+        menuBarManager.onVocabBoostEnabled = { [weak mic] in
+            mic?.prewarmVocabularyBoost()
+        }
         menuBarManager.onPolishModeChange = { [weak mic, weak menuBarManager] mode in
             mic?.polishMode = mode
             if let mic {
@@ -155,6 +161,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         mic.onTranscribedText = { [weak menuBarManager] text in
             menuBarManager?.typeDictationText(text)
+        }
+        mic.onReplaceTranscribedText = { [weak menuBarManager] raw, polished in
+            menuBarManager?.replaceDictationText(raw, with: polished)
         }
         menuBarManager.onRecoveryAction = { [weak mic] in
             mic?.performRecovery()

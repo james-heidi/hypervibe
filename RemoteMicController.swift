@@ -32,11 +32,17 @@ final class RemoteMicController {
     private var drainPending = false
     private var wavSamples = [Int16]()
 
-    /// Wait this long after Siri-up for late HCI packets before finishing ASR.
+    /// Hard cap after Siri-up for late HCI packets before finishing ASR.
     private static let postReleaseDrain: TimeInterval = 0.35
     /// After a cold capture start, wait up to this long for the first audio
     /// before giving up (helper bluetoothd restart alone takes ~2s).
     private static let coldStartGrace: TimeInterval = 3.0
+    /// Adaptive drain: commit once no voice frame arrived for this long
+    /// (frames are 20 ms; HCI batching observed ≲60 ms). Caps above still hold.
+    private static let quietWindow: TimeInterval = 0.12
+    private static let drainPollInterval: TimeInterval = 0.05
+    /// Stamped on `queue` for every decoded voice frame (adaptive drain input).
+    private var lastVoiceFrameAt: Date?
     private var utteranceBeganAt: Date?
     private var captureWasColdAtPress = false
     private var utteranceReceivedFrame = false
@@ -71,6 +77,14 @@ final class RemoteMicController {
     var onReadinessState: ((MicReadinessPresentationState) -> Void)?
     var onAudioLevel: ((Float) -> Void)?
     var onTranscribedText: ((String) -> Void)?
+    /// Polish correction: (rawAsTyped, polished). Fired only when guards pass.
+    var onReplaceTranscribedText: ((String, String) -> Void)?
+
+    /// Apply polish results as a typed correction after the raw transcript.
+    static var correctionEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "dictationCorrectionEnabled") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "dictationCorrectionEnabled") }
+    }
     var onEngineState: ((TranscriptionEngineID, TranscriptionEngineState) -> Void)?
     var onRecoveryModeChange: ((RecoveryMode) -> Void)?
 
@@ -284,6 +298,19 @@ final class RemoteMicController {
         (engine as? ParakeetTranscriptionEngine)?.cancelModelDownload()
     }
 
+    func prewarmVocabularyBoost() {
+        (engine as? ParakeetTranscriptionEngine)?.prewarmVocabularyBoost()
+    }
+
+    func startCtcModelDownload() {
+        guard let parakeet = engine as? ParakeetTranscriptionEngine else {
+            setEngine(.parakeet)
+            (engine as? ParakeetTranscriptionEngine)?.startCtcModelDownload()
+            return
+        }
+        parakeet.startCtcModelDownload()
+    }
+
     /// Prepare the selected engine and keep HCI capture warm so the first Siri
     /// press after idle isn't racing PacketLogger/bluetoothd startup (~2s).
     func startIdleCaptureIfEnabled() {
@@ -366,6 +393,7 @@ final class RemoteMicController {
             siriHeld = true
             lastRearmStatus = nil
             utteranceReceivedFrame = false
+            queue.async { self.lastVoiceFrameAt = nil }
             // A new press supersedes any in-flight polish from the previous utterance.
             polisher.cancel()
             recognitionInFlight = false
@@ -458,23 +486,25 @@ final class RemoteMicController {
                 publishReadiness(.recognizing)
             }
             // Keep PushToTalk armed during drain so trailing HCI frames still arrive.
-            let drain: TimeInterval
+            // Adaptive: commit when frames go quiet; old fixed values are hard caps.
+            let cap: TimeInterval
             if captureWasColdAtPress {
                 let elapsed = utteranceBeganAt.map { Date().timeIntervalSince($0) } ?? 0
-                drain = max(Self.postReleaseDrain, Self.coldStartGrace - elapsed)
+                cap = max(Self.postReleaseDrain, Self.coldStartGrace - elapsed)
             } else {
-                drain = Self.postReleaseDrain
+                cap = Self.postReleaseDrain
             }
-            rmDebug(String(format: "🎤 Siri up — draining %.2fs frames=%d cold=%@",
-                           drain, capture.framesSeen, captureWasColdAtPress ? "yes" : "no"))
+            let releasedAt = Date()
+            rmDebug(String(format: "🎤 Siri up — drain cap %.2fs frames=%d cold=%@",
+                           cap, capture.framesSeen, captureWasColdAtPress ? "yes" : "no"))
             let work = DispatchWorkItem { [weak self] in
-                self?.finishHeldUtterance()
+                self?.drainPollTick(capDeadline: releasedAt.addingTimeInterval(cap), releasedAt: releasedAt)
             }
             drainPending = true
             queue.sync {
                 self.finishWorkItem = work
             }
-            queue.asyncAfter(deadline: .now() + drain, execute: work)
+            queue.asyncAfter(deadline: .now() + Self.drainPollInterval, execute: work)
         } else {
             // Release without a hold we own (press fell through above) — pass it
             // through as well so HID mapping sees a paired key-down/key-up.
@@ -483,6 +513,27 @@ final class RemoteMicController {
         }
         publishStatus()
         return true
+    }
+
+    /// Runs on `queue`. Commits when voice frames have been quiet for
+    /// `quietWindow`, or at `capDeadline` (old fixed-drain worst case).
+    /// Utterances with no frames at all wait for the cap, as before.
+    private func drainPollTick(capDeadline: Date, releasedAt: Date) {
+        finishWorkItem = nil
+        let now = Date()
+        let quietEnough = utteranceReceivedFrame
+            && now.timeIntervalSince(lastVoiceFrameAt ?? .distantPast) >= Self.quietWindow
+        if quietEnough || now >= capDeadline {
+            rmDebug(String(format: "🎤 drain commit after %.3fs (%@)",
+                           now.timeIntervalSince(releasedAt), quietEnough ? "quiet" : "cap"))
+            finishHeldUtterance()
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            self?.drainPollTick(capDeadline: capDeadline, releasedAt: releasedAt)
+        }
+        finishWorkItem = work
+        queue.asyncAfter(deadline: .now() + Self.drainPollInterval, execute: work)
     }
 
     private func finishHeldUtterance() {
@@ -509,17 +560,27 @@ final class RemoteMicController {
             switch result {
             case .success(let text):
                 if let text, !text.isEmpty {
-                    // Keep the recognizing HUD up through polish; type once at the end.
-                    self.publishReadiness(.recognizing)
+                    // Fast path: type raw immediately; polish runs concurrently and
+                    // lands as a guarded correction (never blocks typing).
+                    self.recognitionInFlight = false
+                    rmDebug("🎤 typed raw transcript len=\(text.count)")
+                    self.recovery.recordTranscript(text)
+                    self.publishRecoveryMode()
+                    self.onTranscribedText?(text)
+                    self.publishReadiness(.ready)
+                    self.publishStatus()
+                    let gen = self.pressGeneration
                     self.polisher.polish(text) { [weak self] polished in
                         guard let self else { return }
-                        self.recognitionInFlight = false
-                        rmDebug("🎤 typed transcript len=\(polished.count)")
+                        CorpusRecorder.shared.attachPolished(polished)
+                        // Correction guards: unchanged press generation (no new hold
+                        // or cancel), no active hold, toggle enabled, text differs.
+                        guard polished != text,
+                              Self.correctionEnabled,
+                              self.pressGeneration == gen,
+                              !self.siriHeld else { return }
                         self.recovery.recordTranscript(polished)
-                        self.publishRecoveryMode()
-                        self.onTranscribedText?(polished)
-                        self.publishReadiness(.ready)
-                        self.publishStatus()
+                        self.onReplaceTranscribedText?(text, polished)
                     }
                 } else {
                     rmDebug("🎤 transcript empty — no typing")
@@ -599,6 +660,7 @@ final class RemoteMicController {
                     self.onAudioLevel?(normalized)
                 }
             }
+            self.lastVoiceFrameAt = Date()
             self.engine.append(pcmS16: pcm, sampleRate: Double(OpusVoiceDecoder.sampleRate))
             if self.wavSamples.count < 48_000 * 30 {
                 self.wavSamples.append(contentsOf: pcm)
@@ -626,18 +688,28 @@ final class RemoteMicController {
             recognitionInFlight = true
             publishReadiness(.recognizing)
             engine.finishUtterance { [weak self] result in
+                guard let self else { return }
                 if case .success(let text) = result, let text, !text.isEmpty {
-                    self?.polisher.polish(text) { polished in
-                        self?.recognitionInFlight = false
-                        self?.onTranscribedText?(polished)
-                        self?.publishReadiness(.ready)
-                        self?.publishStatus()
+                    // Raw-first here too (disconnect/teardown path).
+                    self.recognitionInFlight = false
+                    self.onTranscribedText?(text)
+                    self.publishReadiness(.ready)
+                    self.publishStatus()
+                    let gen = self.pressGeneration
+                    self.polisher.polish(text) { [weak self] polished in
+                        guard let self else { return }
+                        CorpusRecorder.shared.attachPolished(polished)
+                        guard polished != text,
+                              Self.correctionEnabled,
+                              self.pressGeneration == gen,
+                              !self.siriHeld else { return }
+                        self.onReplaceTranscribedText?(text, polished)
                     }
                     return
                 }
-                self?.recognitionInFlight = false
-                self?.publishReadiness(.ready)
-                self?.publishStatus()
+                self.recognitionInFlight = false
+                self.publishReadiness(.ready)
+                self.publishStatus()
             }
         }
         decoder?.reset()

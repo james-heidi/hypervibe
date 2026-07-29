@@ -484,6 +484,8 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     var onOpenAIKeySave: ((String) -> Void)?
     var onParakeetDownload: (() -> Void)?
     var onParakeetDownloadCancel: (() -> Void)?
+    var onCtcModelDownload: (() -> Void)?
+    var onVocabBoostEnabled: (() -> Void)?
     var onPolishModeChange: ((TranscriptPolishMode) -> Void)?
     var onOpenSetupWizard: (() -> Void)?
     var onRecoveryAction: (() -> Void)?
@@ -756,6 +758,66 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             engineMenu.addItem(cancel)
         }
 
+        engineMenu.addItem(NSMenuItem.separator())
+        let vocabItem = NSMenuItem(title: "词表增强", action: nil, keyEquivalent: "")
+        let vocabMenu = NSMenu()
+        var vocabView: StickyMenuItemView?
+        let vocabToggle = stickyItem(
+            title: "启用词表增强",
+            isOn: VocabularyStore.shared.isEnabled
+        ) { [weak self] in
+            VocabularyStore.shared.isEnabled.toggle()
+            vocabView?.isOn = VocabularyStore.shared.isEnabled
+            if VocabularyStore.shared.isEnabled { self?.onVocabBoostEnabled?() }
+        }
+        vocabView = vocabToggle.view as? StickyMenuItemView
+        vocabToggle.toolTip = "用 CTC 关键词检测把领域词（Heidi、Claude Code…）纠正为规范写法；需先下载增强模型"
+        vocabMenu.addItem(vocabToggle)
+        if !ParakeetTranscriptionEngine.ctcModelsCached {
+            let downloadItem = NSMenuItem(
+                title: "下载增强模型（约 130 MB）…",
+                action: #selector(downloadCtcModels(_:)),
+                keyEquivalent: ""
+            )
+            downloadItem.target = self
+            vocabMenu.addItem(downloadItem)
+        }
+        let editVocabItem = NSMenuItem(
+            title: "编辑词表…",
+            action: #selector(editVocabulary(_:)),
+            keyEquivalent: ""
+        )
+        editVocabItem.target = self
+        editVocabItem.toolTip = VocabularyStore.fileURL.path
+        vocabMenu.addItem(editVocabItem)
+        vocabItem.submenu = vocabMenu
+        engineMenu.addItem(vocabItem)
+
+        let frontEndItem = NSMenuItem(title: "音频前端（实验）", action: nil, keyEquivalent: "")
+        let frontEndMenu = NSMenu()
+        addStickyChoices(
+            to: frontEndMenu,
+            options: AudioFrontEndMode.allCases,
+            title: { $0.displayName },
+            isOn: { AudioFrontEndMode.current == $0 },
+            onSelect: { AudioFrontEndMode.current = $0 }
+        )
+        frontEndItem.toolTip = "旧版为默认；语料评测通过后才切换增强前端"
+        frontEndItem.submenu = frontEndMenu
+        engineMenu.addItem(frontEndItem)
+
+        var corpusView: StickyMenuItemView?
+        let corpusItem = stickyItem(
+            title: "录制听写语料（评测用）",
+            isOn: CorpusRecorder.shared.isEnabled
+        ) {
+            CorpusRecorder.shared.isEnabled.toggle()
+            corpusView?.isOn = CorpusRecorder.shared.isEnabled
+        }
+        corpusView = corpusItem.view as? StickyMenuItemView
+        corpusItem.toolTip = "保存每次听写的 WAV 与转写到 ~/Library/Application Support/HyperVibe/corpus/"
+        engineMenu.addItem(corpusItem)
+
         engineItem.submenu = engineMenu
         menu.addItem(engineItem)
 
@@ -785,6 +847,19 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         )
         cloudStatus.isEnabled = false
         polishMenu.addItem(cloudStatus)
+        polishMenu.addItem(NSMenuItem.separator())
+        var correctionView: StickyMenuItemView?
+        let correctionItem = stickyItem(
+            title: "润色后自动修正",
+            isOn: RemoteMicController.correctionEnabled
+        ) {
+            RemoteMicController.correctionEnabled.toggle()
+            correctionView?.isOn = RemoteMicController.correctionEnabled
+        }
+        correctionView = correctionItem.view as? StickyMenuItemView
+        correctionItem.toolTip = "原文先上屏，润色完成后自动退格替换差异部分。若期间手动输入过文字请关闭。"
+        polishMenu.addItem(correctionItem)
+
         polishItem.submenu = polishMenu
         menu.addItem(polishItem)
 
@@ -1361,6 +1436,16 @@ class MenuBarManager: NSObject, NSMenuDelegate {
         onParakeetDownloadCancel?()
     }
 
+    @objc private func downloadCtcModels(_ sender: NSMenuItem) {
+        onCtcModelDownload?()
+    }
+
+    @objc private func editVocabulary(_ sender: NSMenuItem) {
+        // Ensure the file exists (seeds defaults), then open in the user's editor.
+        _ = VocabularyStore.shared.terms()
+        NSWorkspace.shared.open(VocabularyStore.fileURL)
+    }
+
     func getMapping(for button: String) -> ButtonAction {
         return buttonMappings[button] ?? .none
     }
@@ -1369,6 +1454,26 @@ class MenuBarManager: NSObject, NSMenuDelegate {
     /// Works across terminals and most text fields; bypasses layout-specific key codes.
     func typeDictationText(_ text: String) {
         typeString(text)
+    }
+
+    /// Polish correction: delete the tail of the previously typed raw text that
+    /// differs from the polished text, then type the polished remainder.
+    /// Deletion counts grapheme clusters, matching Cocoa's delete-backward.
+    // ponytail: backspace-from-end only; cursor-move diffing if corrections ever get long.
+    func replaceDictationText(_ oldText: String, with newText: String) {
+        guard oldText != newText else { return }
+        let old = Array(oldText), new = Array(newText)
+        var prefix = 0
+        while prefix < min(old.count, new.count), old[prefix] == new[prefix] { prefix += 1 }
+        let deleteCount = old.count - prefix
+        rmDebug("🎤 polish correction delete=\(deleteCount) retype=\(new.count - prefix)")
+        for _ in 0..<deleteCount {
+            sendKey(kVK_Delete)
+            usleep(3000)
+        }
+        if prefix < new.count {
+            typeString(String(new[prefix...]))
+        }
     }
 
     private func typeString(_ s: String) {
