@@ -54,6 +54,7 @@ open HyperVibe.app
 - **Event tap placement.** MediaKeyInterceptor must be `.cghidEventTap` at `.headInsertEventTap` — session-level is too late. Tap re-enables on timeout/user-input disable and on wake.
 - **HID seize** on connect prevents macOS double-dispatch (Music launching, system funk sound). Don't remove.
 - **Stuck-key safety.** Push-to-talk holds must release on remote disconnect and self-heal on missed release events.
+- **Mic arming is serialized, not synchronous.** `MicActivator` hops every entry point onto its own serial queue; `rearmOnSiriDown()` returns immediately. Ordering (a press's enable before its release's disable) is guaranteed by that queue — not by running on the press callback, which used to hold the main runloop for ~1.2 s and froze the dictation wave. Don't add a `pressGeneration` guard around the press-path rearm: that guard, not the async hop, is what once let a fast release drop the arm and capture no audio. `shutdown()` uses `disarmAndWait()` so quitting can't leave the mic armed.
 - **Gesture trailing-space policy.** Slash commands that take an argument get a trailing space; standalone/picker commands don't. Gestures never send Enter.
 - **Polish correction is generation-guarded.** Raw transcript types immediately; the async polish correction (backspace+retype in `MenuBarManager.replaceDictationText`) must only fire when `pressGeneration` is unchanged, no hold is active, and the toggle is on — otherwise it can delete user-typed characters. Don't reorder typing back behind polish.
 

@@ -269,7 +269,11 @@ final class MicCapturePipeline {
 
         helperSessionActive = true
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + 0.1, repeating: 0.1)
+        // 20 ms, not 100: a 100 ms tail poll clumped voice frames into bursts, and the
+        // HUD level could only be as fresh as the clump. The read is an open+seek+tail
+        // on a file growing ~10 KB/s, and the rotation guard below still bounds its size.
+        timer.schedule(deadline: .now() + Self.captureTailPollInterval,
+                       repeating: Self.captureTailPollInterval)
         timer.setEventHandler { [weak self] in
             self?.readPrivilegedOutput()
         }
@@ -357,6 +361,7 @@ final class MicCapturePipeline {
     }
 
     private static let captureRotateBytes: UInt64 = 32 * 1024 * 1024
+    private static let captureTailPollInterval: TimeInterval = 0.02
 
     private func readPrivilegedOutput() {
         guard let output = captureOutputURL,
@@ -379,6 +384,7 @@ final class MicCapturePipeline {
                 return
             }
             captureReadOffset += UInt64(chunk.count)
+            DictationTiming.logOnce(.firstCaptureRead, detail: "bytes=\(chunk.count)")
             if status == .starting {
                 status = .listening
             }

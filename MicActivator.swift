@@ -11,8 +11,16 @@ import Foundation
 import IOKit.hid
 
 /// Arms gen-3 voice streaming while Siri is held.
+///
+/// Every public entry point hops onto `queue` and returns immediately. `sendEnable`
+/// replays up to 20 `IOHIDDeviceSetReport` round trips at ~60 ms each — measured at
+/// 1.2 s — which used to run on the Siri-down callback and froze the main runloop
+/// (and with it the dictation wave) for the whole press. The serial queue keeps the
+/// enable→disable ordering that the press path depends on: a release's `disarm()`
+/// cannot overtake its own press's arm, so the microphone is never left armed.
 final class MicActivator {
     static let inputEnableByte: UInt8 = 0xAF
+    private let queue = DispatchQueue(label: "com.hypervibe.mic-activator")
     private var openDevices: [IOHIDDevice] = []
     private var ownsDevices = false
 
@@ -34,6 +42,10 @@ final class MicActivator {
     /// Does **not** toggle PushToTalk off first — HID reattach during an active
     /// hold used to call `disarm()` and cut the mic stream mid-utterance.
     func useSharedDevices(_ devices: [IOHIDDevice]) {
+        queue.async { self.useSharedDevicesOnQueue(devices) }
+    }
+
+    private func useSharedDevicesOnQueue(_ devices: [IOHIDDevice]) {
         if ownsDevices {
             for device in openDevices {
                 IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -50,6 +62,10 @@ final class MicActivator {
 
     /// Open every Apple remote-looking HID device and keep them for SetReport.
     func arm() {
+        queue.async { self.armOnQueue() }
+    }
+
+    private func armOnQueue() {
         // Never call disarm() here — that would leave shared devices in openDevices
         // then mark ownsDevices=true and close RemoteInputHandler's seize on teardown.
         if ownsDevices {
@@ -101,16 +117,28 @@ final class MicActivator {
     }
 
     func rearmOnSiriDown() {
-        let began = CFAbsoluteTimeGetCurrent()
-        sendEnable()
-        tryPushToTalk(enabled: true)
-        rmDebug(String(
-            format: "🎤 MicActivator rearm total %.0fms",
-            (CFAbsoluteTimeGetCurrent() - began) * 1000
-        ))
+        queue.async {
+            let began = CFAbsoluteTimeGetCurrent()
+            self.sendEnable()
+            self.tryPushToTalk(enabled: true)
+            rmDebug(String(
+                format: "🎤 MicActivator rearm total %.0fms",
+                (CFAbsoluteTimeGetCurrent() - began) * 1000
+            ))
+        }
     }
 
     func disarm() {
+        queue.async { self.disarmOnQueue() }
+    }
+
+    /// Teardown variant for app shutdown: waits so the process cannot exit before
+    /// `PushToTalk(false)` reaches the remote and leave its microphone armed.
+    func disarmAndWait() {
+        queue.sync { self.disarmOnQueue() }
+    }
+
+    private func disarmOnQueue() {
         tryPushToTalk(enabled: false)
         if ownsDevices {
             for device in openDevices {

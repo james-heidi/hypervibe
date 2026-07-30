@@ -153,20 +153,27 @@ private final class HyperVibeAlertPanel: NSObject {
 }
 
 private final class AudioWaveformView: NSView {
+    /// Meter envelope: fast attack, slow release. Levels arrive in bursts (frames are
+    /// decoded in clumps), so a fast decay reads as per-update stutter instead of
+    /// sustained loudness.
+    private static let levelAttack: CGFloat = 0.5
+    private static let levelDecayPerTick: CGFloat = 0.94
+    /// A tick gap this long means the main runloop stalled — the wave visibly freezes.
+    private static let tickGapWarning: TimeInterval = 0.1
+
     private var timer: Timer?
     private var phase: CGFloat = 0
     private var targetLevel: CGFloat = 0
     private var displayedLevel: CGFloat = 0
-    private var reactive = false
+    private var lastTickAt: TimeInterval = 0
 
     override var isFlipped: Bool { true }
     override var wantsUpdateLayer: Bool { false }
     override var isOpaque: Bool { false }
 
-    func start(reactive: Bool) {
+    func start() {
         // Never reset amplitude here: ready→listening must not restart the animation,
         // otherwise the wave visibly snaps mid-hold.
-        self.reactive = reactive
         guard timer == nil else {
             needsDisplay = true
             return
@@ -180,10 +187,6 @@ private final class AudioWaveformView: NSView {
         needsDisplay = true
     }
 
-    func setReactive(_ reactive: Bool) {
-        self.reactive = reactive
-    }
-
     func setLevel(_ level: Float) {
         targetLevel = CGFloat(max(0, min(1, level)))
     }
@@ -193,7 +196,7 @@ private final class AudioWaveformView: NSView {
         timer = nil
         targetLevel = 0
         displayedLevel = 0
-        reactive = false
+        lastTickAt = 0
         needsDisplay = true
     }
 
@@ -202,16 +205,21 @@ private final class AudioWaveformView: NSView {
     func clearVoiceLevel() {
         targetLevel = 0
         displayedLevel = 0
-        reactive = false
         needsDisplay = true
     }
 
     private func tick() {
-        phase += 0.10
-        if reactive {
-            displayedLevel += (targetLevel - displayedLevel) * 0.34
-            targetLevel *= 0.88
+        let now = Date.timeIntervalSinceReferenceDate
+        if lastTickAt > 0, now - lastTickAt > Self.tickGapWarning {
+            rmDebug(String(format: "🌊 wave tick gap %.3fs (main runloop stalled)", now - lastTickAt))
         }
+        lastTickAt = now
+        phase += 0.10
+        // Always metering: the level only rises while audio flows, and at level 0 the
+        // amplitude term vanishes, so this renders identically to the idle baseline.
+        // No reactive flag to arm means the first level of a press needs no state hop.
+        displayedLevel += (targetLevel - displayedLevel) * Self.levelAttack
+        targetLevel *= Self.levelDecayPerTick
         needsDisplay = true
     }
 
@@ -230,10 +238,10 @@ private final class AudioWaveformView: NSView {
             let centerWeight = 1 - distance / CGFloat(barCount)
             // The breathing baseline is always present, and voice rides on top of it.
             // Ready and silent-listening therefore render identically — no collapse to
-            // flat dots when the reactive state arrives before the first audio frame.
+            // flat dots when a press arrives before the first audio frame.
             let breath = (sin(phase + CGFloat(index) * 0.9) + 1) / 2
             var height = 7 + breath * 12 * centerWeight
-            if reactive {
+            if displayedLevel > 0 {
                 let flutter = 0.72 + 0.28 * sin(phase * 1.7 + CGFloat(index) * 1.25)
                 height += displayedLevel * 30 * centerWeight * flutter
             }
@@ -333,7 +341,7 @@ private final class MicReadinessHUD {
         // Keep the breathing timer alive at alpha 0 so reveal is already mid-breath.
         positionOnActiveScreen()
         waveform.isHidden = false
-        waveform.start(reactive: false)
+        waveform.start()
         panel.orderFrontRegardless()
         panel.display()
 
@@ -353,15 +361,14 @@ private final class MicReadinessHUD {
         }
     }
 
-    func showWaveform(reactive: Bool) {
+    func showWaveform() {
         hideWorkItem?.cancel()
         hideWorkItem = nil
         spinner.stopAnimation(nil)
         spinner.isHidden = true
         iconView.isHidden = true
         waveform.isHidden = false
-        waveform.start(reactive: reactive)
-        waveform.setReactive(reactive)
+        waveform.start()
         revealNow()
     }
 
@@ -409,7 +416,7 @@ private final class MicReadinessHUD {
         // timer tick — which often arrived after HID rearm blocked main.
         waveform.clearVoiceLevel()
         waveform.isHidden = false
-        waveform.start(reactive: false)
+        waveform.start()
         panel.alphaValue = 0
         isVisible = false
     }
@@ -420,6 +427,7 @@ private final class MicReadinessHUD {
         }
         isVisible = true
         panel.alphaValue = 1
+        DictationTiming.logOnce(.hudReveal)
         // Paint inside this HID callback turn so the frame can composite before we
         // go on to block the runloop with IOHID SetReport / capture start.
         waveform.display()
@@ -1319,12 +1327,13 @@ class MenuBarManager: NSObject, NSMenuDelegate {
             case .warming(let showHUD):
                 // Keep the breathing wave during warm-up; spinner is reserved for ASR.
                 if showHUD || self.micReadinessHUD.isVisible {
-                    self.micReadinessHUD.showWaveform(reactive: false)
+                    self.micReadinessHUD.showWaveform()
                 }
-            case .readyToSpeak:
-                self.micReadinessHUD.showWaveform(reactive: false)
-            case .listening:
-                self.micReadinessHUD.showWaveform(reactive: true)
+            case .readyToSpeak, .listening:
+                // One visual for both: the wave meters whatever level has arrived, so
+                // `.listening` (published from the first decoded frame) is no longer a
+                // gate the eye has to wait for — it only changes menu text and chrome.
+                self.micReadinessHUD.showWaveform()
             case .recognizing:
                 self.micReadinessHUD.showSpinner()
             case .releasedBeforeReady:
