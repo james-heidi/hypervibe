@@ -8,6 +8,9 @@ Vendor/libopus/lib/*.a
 # Xcode
 .swiftpm/
 .build/
+# Root-only: byproduct of resolving the unused root Package.swift. The real pin
+# lives in Vendor/FluidAudioDeps/Package.resolved, which stays tracked.
+/Package.resolved
 *.xcodeproj/
 *.xcworkspace/
 xcuserdata/
