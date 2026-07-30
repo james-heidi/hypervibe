@@ -72,6 +72,8 @@ final class RemoteMicController {
     private var warmRetryAttempt = 0
     private var warmRetryWorkItem: DispatchWorkItem?
     private var lastAudioLevelPublishedAt: TimeInterval = 0
+    /// Loudest per-frame level since the last publish (see handlePayload). Accessed on `queue`.
+    private var pendingAudioLevelPeak: Float = 0
 
     var onStatus: ((MicCaptureStatus, String?) -> Void)?
     var onReadinessState: ((MicReadinessPresentationState) -> Void)?
@@ -355,7 +357,9 @@ final class RemoteMicController {
     func shutdown() {
         stopSession(cancelRecognition: true)
         capture.stop()
-        activator.disarm()
+        // Blocking variant: the activator is asynchronous now, and quitting before
+        // PushToTalk(false) lands would leave the remote's microphone armed.
+        activator.disarmAndWait()
         clearRecovery()
     }
 
@@ -406,6 +410,7 @@ final class RemoteMicController {
             }
             captureWasColdAtPress = coldStart
             utteranceBeganAt = Date()
+            DictationTiming.markPress()
             // Paint the wave before any HID / capture work. publishReadiness does a
             // synchronous display + CATransaction.flush, so the frame is committed to
             // the window server before we leave this callback. Utterance lifecycle
@@ -445,6 +450,10 @@ final class RemoteMicController {
             queue.async {
                 self.acceptingAudio = true
                 self.wavSamples.removeAll(keepingCapacity: true)
+                // Clear the throttle so the first frame of this press publishes its
+                // level at once instead of waiting out a window from the last utterance.
+                self.lastAudioLevelPublishedAt = 0
+                self.pendingAudioLevelPeak = 0
             }
 
             let armID = UUID()
@@ -456,11 +465,15 @@ final class RemoteMicController {
             default:
                 needsCaptureStart = false
             }
-            // Arm synchronously on the press callback. Deferring it let a fast
-            // release bump `pressGeneration` first, so the queued arm dropped
-            // itself and the tap captured no audio. The SetReport is cheap thanks
-            // to proven-target caching, and the HUD frame is already committed
-            // above via publishReadiness's display + CATransaction.flush.
+            // Arm from the press callback, but do not wait for it: MicActivator
+            // serializes internally, so this returns at once and the ~1.2 s of
+            // SetReport round trips no longer freeze the main runloop (and with it
+            // the dictation wave) for the whole press.
+            //
+            // Do NOT reintroduce a `pressGeneration` guard around this call. The
+            // original failure was the guard, not the hop: a fast release bumped the
+            // generation first and the queued arm dropped itself, capturing no audio.
+            // Ordering is safe because release's disarm goes through the same queue.
             activator.rearmOnSiriDown()
             if needsCaptureStart {
                 armQueue.async { [weak self] in
@@ -471,6 +484,7 @@ final class RemoteMicController {
             rmDebug("🎤 Siri down — mic armed engine=\(engineID.rawValue) coldStart=\(coldStart)")
         } else if siriHeld {
             siriHeld = false
+            DictationTiming.endPress()
             // Invalidate any in-flight off-main rearm from this press.
             pressGeneration = UUID()
             recognitionInFlight = true
@@ -644,21 +658,28 @@ final class RemoteMicController {
                 ))
                 self.publishReadiness(.listening)
             }
+            // Measure every frame and hold the loudest across the publish window.
+            // Frames arrive in bursts, so publishing whichever frame happened to win a
+            // 30 Hz throttle could represent a loud onset with a quiet frame.
+            var sumSquares = 0.0
+            var count = 0
+            for index in stride(from: 0, to: pcm.count, by: 4) {
+                let value = Double(pcm[index]) / 32768.0
+                sumSquares += value * value
+                count += 1
+            }
+            if count > 0 {
+                let rms = sqrt(sumSquares / Double(count))
+                let normalized = Float(min(1, max(0, (rms - 0.003) * 18)))
+                self.pendingAudioLevelPeak = max(self.pendingAudioLevelPeak, normalized)
+            }
             let now = Date.timeIntervalSinceReferenceDate
             if now - self.lastAudioLevelPublishedAt >= 1.0 / 30.0 {
                 self.lastAudioLevelPublishedAt = now
-                var sumSquares = 0.0
-                var count = 0
-                for index in stride(from: 0, to: pcm.count, by: 8) {
-                    let value = Double(pcm[index]) / 32768.0
-                    sumSquares += value * value
-                    count += 1
-                }
-                if count > 0 {
-                    let rms = sqrt(sumSquares / Double(count))
-                    let normalized = Float(min(1, max(0, (rms - 0.003) * 18)))
-                    self.onAudioLevel?(normalized)
-                }
+                let peak = self.pendingAudioLevelPeak
+                self.pendingAudioLevelPeak = 0
+                DictationTiming.logOnce(.firstLevel, detail: String(format: "level=%.2f", peak))
+                self.onAudioLevel?(peak)
             }
             self.lastVoiceFrameAt = Date()
             self.engine.append(pcmS16: pcm, sampleRate: Double(OpusVoiceDecoder.sampleRate))

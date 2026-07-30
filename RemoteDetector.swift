@@ -8,6 +8,7 @@
 import Foundation
 import IOKit
 import IOKit.hid
+import os
 
 /// Append diagnostic line to /tmp/hypervibe.log (unified-log redacts NSLog under hardened runtime).
 func rmDebug(_ msg: String) {
@@ -21,6 +22,51 @@ func rmDebug(_ msg: String) {
         } else {
             try? data.write(to: URL(fileURLWithPath: path))
         }
+    }
+}
+
+/// Press-scoped stage timings for dictation feedback latency. Each stage logs once
+/// per Siri press with its offset from the press, so a lagging wave can be blamed on
+/// a specific stage (helper buffering vs capture poll vs UI) instead of guessed at.
+/// `markPress` runs on the Siri-down callback; the stage loggers run on the capture,
+/// decode, and UI paths, hence the lock.
+enum DictationTiming {
+    enum Stage: String {
+        case hudReveal = "hud-reveal"
+        case firstCaptureRead = "first-capture-read"
+        case firstLevel = "first-level"
+    }
+
+    private struct PressState {
+        var pressedAt: TimeInterval?
+        var logged: Set<String> = []
+    }
+
+    private static let state = OSAllocatedUnfairLock(initialState: PressState())
+
+    static func markPress() {
+        state.withLock { $0 = PressState(pressedAt: Date.timeIntervalSinceReferenceDate) }
+    }
+
+    static func endPress() {
+        state.withLock { $0 = PressState() }
+    }
+
+    /// Log the first occurrence of `stage` in the current press; no-op afterwards
+    /// and when no press is active.
+    static func logOnce(_ stage: Stage, detail: String = "") {
+        let elapsed: TimeInterval? = state.withLock { press in
+            guard let pressedAt = press.pressedAt,
+                  press.logged.insert(stage.rawValue).inserted else { return nil }
+            return Date.timeIntervalSinceReferenceDate - pressedAt
+        }
+        guard let elapsed else { return }
+        rmDebug(String(
+            format: "🎤 timing %@ +%.3fs%@",
+            stage.rawValue,
+            elapsed,
+            detail.isEmpty ? "" : " \(detail)"
+        ))
     }
 }
 
